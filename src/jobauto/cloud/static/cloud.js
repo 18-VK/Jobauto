@@ -286,6 +286,16 @@ function fillQuickFilterEditorFromYaml(text) {
   $('#keywords-exclude').value = (data.exclude || 'intern, contract, night shift').replace(/['\"]/g, '').replace(/\s*,\s*/g, ', ');
 }
 
+function replaceYamlSection(text, sectionName, replacement) {
+  const pattern = new RegExp(`(^|\\n)${sectionName}:\\s*\\n[\\s\\S]*?(?=\\n[A-Za-z0-9_]+:\\s*(?:\\n|$)|$)`, 'm');
+  const block = replacement.trim();
+  const withSection = `${sectionName}:\n${block.split('\n').slice(1).join('\n')}`;
+  if (!pattern.test(text)) {
+    return `${text.trim()}\n\n${withSection}\n`;
+  }
+  return text.replace(pattern, `\n${withSection}\n`);
+}
+
 function makeSearchYamlFromForm() {
   const roleChecklist = [...document.querySelectorAll('#role-list input:checked')].map((el) => el.value.trim()).filter(Boolean);
   const customRole = $('#custom-role').value.trim();
@@ -298,8 +308,11 @@ function makeSearchYamlFromForm() {
   const roleYaml = roles.map((role) => `    - title: "${role.replace(/"/g, '\\"')}"\n      weight: 1.0\n      aliases: ["${role.replace(/"/g, '\\"')}" ]`).join('\n');
   const start = Number($('#active-hours-start').value || 8);
   const end = Number($('#active-hours-end').value || 22);
-  const searchBlock = `search:\n  roles:\n${roleYaml}\n  keywords:\n    include: [${include.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    exclude: [${exclude.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n  experience:\n    min_years: ${Number($('#exp-min').value || 2)}\n    max_years: ${Number($('#exp-max').value || 8)}\n    current_years: ${(Number($('#exp-min').value || 2) + Number($('#exp-max').value || 8)) / 2}\n  locations:\n    preferred: [${locations.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    acceptable: []\n    blocked: []\n    work_mode: [${modes.map((x) => `"${x}"`).join(', ')}]\n    relocate: false\n  compensation:\n    currency: "INR"\n    current_ctc_lpa: ${(Number($('#salary-min').value || 10))}\n    expected_ctc_lpa: ${(Number($('#salary-min').value || 10) + 4)}\n    minimum_acceptable_lpa: ${Number($('#salary-min').value || 10)}\n    negotiable: true\n  company:\n    blocked: []\n    preferred: []\n    exclude_staffing_agencies: false\n    min_employee_rating: 3.0\n  posting:\n    max_age_days: 21\n    require_salary_disclosed: false\napplication:\n  pacing:\n    active_hours: [${start}, ${end}]\n`;
-  return searchBlock;
+
+  return {
+    search: `search:\n  roles:\n${roleYaml}\n  keywords:\n    include: [${include.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    exclude: [${exclude.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n  experience:\n    min_years: ${Number($('#exp-min').value || 2)}\n    max_years: ${Number($('#exp-max').value || 8)}\n    current_years: ${(Number($('#exp-min').value || 2) + Number($('#exp-max').value || 8)) / 2}\n  locations:\n    preferred: [${locations.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    acceptable: []\n    blocked: []\n    work_mode: [${modes.map((x) => `"${x}"`).join(', ')}]\n    relocate: false\n  compensation:\n    currency: "INR"\n    current_ctc_lpa: ${(Number($('#salary-min').value || 10))}\n    expected_ctc_lpa: ${(Number($('#salary-min').value || 10) + 4)}\n    minimum_acceptable_lpa: ${Number($('#salary-min').value || 10)}\n    negotiable: true\n  company:\n    blocked: []\n    preferred: []\n    exclude_staffing_agencies: false\n    min_employee_rating: 3.0\n  posting:\n    max_age_days: 21\n    require_salary_disclosed: false`,
+    application: `application:\n  pacing:\n    active_hours: [${start}, ${end}]`
+  };
 }
 
 async function loadPrefs() {
@@ -321,9 +334,10 @@ function prefMsg(text, ok) {
 
 $('#btn-pref-apply').onclick = () => {
   const yaml = $('#pref-yaml').value;
-  const updated = yaml.replace(/search:\s*\n([\s\S]*?)\n\s*scoring:/, makeSearchYamlFromForm() + '\n  // keep remaining settings')
-    .replace(/\n\s*\/\/ keep remaining settings/, '');
-  $('#pref-yaml').value = updated.replace(/\n\s*scoring:/, '\n\nscoring:');
+  const form = makeSearchYamlFromForm();
+  let updated = replaceYamlSection(yaml, 'search', form.search);
+  updated = replaceYamlSection(updated, 'application', form.application);
+  $('#pref-yaml').value = updated;
   prefMsg('Quick filters applied to the YAML editor.', true);
 };
 
