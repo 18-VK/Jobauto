@@ -313,9 +313,15 @@ function replaceYamlSection(text, sectionName, replacement) {
 function makeSearchYamlFromForm() {
   const roleChecklist = [...document.querySelectorAll('#role-list input:checked')].map((el) => el.value.trim()).filter(Boolean);
   const customRole = $('#custom-role').value.trim();
-  const roles = [...new Set([...roleChecklist, ...(customRole ? [customRole] : [])])];
+  let roles = [...new Set([...roleChecklist, ...(customRole ? [customRole] : [])])];
+  if (!roles.length) {
+    roles = ['Software Developer', 'Backend Developer', 'Full Stack Developer', '.NET Developer'];
+  }
   const locations = $('#pref-location').value.split(',').map((x) => x.trim()).filter(Boolean);
   const modes = [...document.querySelectorAll('.work-mode-check:checked')].map((el) => el.value);
+  if (!modes.length) {
+    modes.push('remote', 'hybrid', 'onsite');
+  }
   const include = $('#keywords-include').value.split(',').map((x) => x.trim()).filter(Boolean);
   const exclude = $('#keywords-exclude').value.split(',').map((x) => x.trim()).filter(Boolean);
 
