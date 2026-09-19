@@ -92,14 +92,45 @@ class PortalAdapter(ABC):
 
     def ensure_logged_in(self) -> None:
         selector = self.portal.auth.get("logged_in_selector")
-        if not selector:
-            return
         self.guard_challenge()
-        try:
-            if self.page.locator(selector).first.is_visible(timeout=5000):
+
+        page_url = str(getattr(self.page, "url", "") or "").lower()
+        login_like = any(token in page_url for token in (
+            "/login", "nlogin", "/signin", "/auth", "register"
+        ))
+
+        # Some portals redesign the visible login marker without changing the
+        # signed-in state itself. If the browser is already on a normal profile
+        # page and not on a login/register page, treat it as signed in rather
+        # than failing immediately from a stale selector.
+        if not login_like:
+            for form in ("input[type='password']", "input[name='password']",
+                         "input[name='email']"):
+                try:
+                    if self.page.locator(form).first.is_visible(timeout=2000):
+                        break
+                except Exception:
+                    pass
+            else:
                 return
-        except Exception:
-            pass
+
+        candidates = []
+        if selector:
+            candidates.append(selector)
+        candidates.extend([
+            "a[href*='/mnjuser/profile']",
+            ".view-profile-wrapper",
+            ".nI-gNb-drawer__bars",
+            ".nI-gNb-drawer__open",
+        ])
+
+        for candidate in candidates:
+            try:
+                if self.page.locator(candidate).first.is_visible(timeout=5000):
+                    return
+            except Exception:
+                pass
+
         raise LoginRequired(
             f"Not signed in to {self.portal.name}. Run: "
             f"python -m jobauto login --portal {self.id}"

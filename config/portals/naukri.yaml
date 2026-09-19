@@ -11,8 +11,9 @@ auth:
   # Persistent browser profile; you log in by hand once. No stored password.
   mode: persistent_profile
   login_url: "https://www.naukri.com/nlogin/login"
-  # Presence of this selector == we are logged in.
-  logged_in_selector: "div.nI-gNb-drawer__bars, .view-profile-wrapper"
+  # Naukri keeps changing the visible profile marker; use a few profile-linked
+  # selectors so a stale one does not falsely log the browser out mid-search.
+  logged_in_selector: "a[href*='/mnjuser/profile'], .view-profile-wrapper, .nI-gNb-drawer__bars, .nI-gNb-drawer__open"
 
 search:
   url_template: "https://www.naukri.com/{role_slug}-jobs-in-{location_slug}?k={keywords}&experience={exp}"

@@ -126,6 +126,48 @@ def run_discover(config, db, monkeypatch) -> dict[str, int]:
     return Pipeline(config, db, log=lambda *_: None).discover()
 
 
+def test_ensure_logged_in_allows_signed_in_profile_on_stale_selector():
+    """A stale auth selector must not falsely log the user out if the page is a valid profile page."""
+    from jobauto.config import PortalConfig
+    from jobauto.portals.base import PortalAdapter
+
+    class _FakeVisible:
+        def __init__(self, selected: bool):
+            self.selected = selected
+
+        def is_visible(self, timeout=0):
+            if self.selected:
+                return True
+            raise Exception("not visible")
+
+    class _FakeLocator:
+        def __init__(self, selected: bool):
+            self._selected = selected
+
+        def first(self):
+            return _FakeVisible(self._selected)
+
+    class _FakePage:
+        url = "https://www.naukri.com/mnjuser/profile"
+
+        def locator(self, selector):
+            return _FakeLocator(False)
+
+    portal = PortalConfig(
+        id="naukri",
+        name="Naukri",
+        enabled=True,
+        base_url="https://www.naukri.com",
+        adapter="jobauto.portals.naukri:NaukriAdapter",
+        auth={"logged_in_selector": ".totally-stale-selector"},
+    )
+    adapter = PortalAdapter.__new__(PortalAdapter)
+    adapter.portal = portal
+    adapter.page = _FakePage()
+
+    adapter.ensure_logged_in()
+
+
 def test_discover_scores_and_stores(config, db, monkeypatch):
     counts = run_discover(config, db, monkeypatch)
     assert counts["found"] == len(RAW_JOBS)
