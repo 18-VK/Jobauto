@@ -245,7 +245,10 @@ def create_app() -> Flask:
     @app.post("/api/preferences")
     @auth.login_required
     def api_save_prefs():
-        text = (request.get_json(silent=True) or {}).get("yaml", "")
+        payload = request.get_json(silent=True) or {}
+        text = (payload.get("yaml") or "").strip()
+        if not text:
+            return jsonify({"error": "preferences yaml cannot be empty"}), 400
         try:
             parsed = yaml.safe_load(text)
         except yaml.YAMLError as exc:
@@ -262,7 +265,9 @@ def create_app() -> Flask:
             user.preferences_yaml = text
             user.preferences_updated = utcnow()
             s.commit()
-        return jsonify({"ok": True})
+            return jsonify({"ok": True,
+                            "yaml": user.preferences_yaml,
+                            "updated": _iso(user.preferences_updated)})
 
     @app.post("/api/tasks")
     @auth.login_required

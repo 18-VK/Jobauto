@@ -329,6 +329,19 @@ def test_agent_reads_preferences_written_in_browser(client):
     assert "Data Engineer" in pulled["yaml"]
 
 
+def test_preferences_save_returns_the_persisted_db_state(client):
+    signup(client)
+    text = ("search:\n  roles:\n    - title: Data Engineer\n"
+            "scoring:\n  weights:\n    title_match: 1.0\n")
+
+    res = client.post("/api/preferences", json={"yaml": text})
+    assert res.status_code == 200
+    payload = res.get_json()
+    assert payload["yaml"] == text
+    assert payload["updated"]
+    assert client.get("/api/preferences").get_json()["yaml"] == text
+
+
 # -------------------------------------------------------- isolation
 def test_users_cannot_see_each_others_jobs(client, monkeypatch):
     signup(client)

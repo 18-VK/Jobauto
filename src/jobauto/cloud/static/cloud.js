@@ -357,15 +357,18 @@ $('#btn-pref-apply').onclick = () => {
 
 $('#btn-pref-save').onclick = async () => {
   const btn = $('#btn-pref-save');
+  const yaml = $('#pref-yaml').value;
   btn.disabled = true;
   try {
-    await api('/api/preferences', {
-      method: 'POST', body: JSON.stringify({ yaml: $('#pref-yaml').value }),
+    const saved = await api('/api/preferences', {
+      method: 'POST', body: JSON.stringify({ yaml }),
     });
+    $('#pref-yaml').value = saved.yaml || yaml;
+    $('#pref-updated').textContent = 'last saved ' + ago(saved.updated || new Date().toISOString());
     prefMsg(agentOnline
-      ? 'Saved. Your PC will pick this up within a minute.'
-      : 'Saved. Your PC will pick this up when it next comes online.', true);
-    loadPrefs();
+      ? 'Saved to the cloud DB. Your PC will pick this up within a minute.'
+      : 'Saved to the cloud DB. Your PC will pick this up when it next comes online.', true);
+    await loadPrefs();
   } catch (e) { prefMsg(e.message, false); } finally { btn.disabled = false; }
 };
 $('#btn-pref-reload').onclick = loadPrefs;
