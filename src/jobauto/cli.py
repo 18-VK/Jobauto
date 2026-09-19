@@ -21,6 +21,7 @@ import argparse
 import sys
 from typing import Any
 
+from .agent.runner import CloudClient, LocalAgent
 from .config import Config, ConfigError, load_config, require_identity
 from .db import Database
 from .models import AppStatus
@@ -29,7 +30,22 @@ from .portals import registry
 from .scoring import Scorer
 
 
+def _sync_cloud_preferences_if_linked() -> None:
+    try:
+        from .agent.runner import load_agent_config
+        url, token = load_agent_config()
+    except Exception:
+        return
+
+    try:
+        agent = LocalAgent(CloudClient(url, token), interval=30)
+        agent.sync_preferences()
+    except Exception:
+        return
+
+
 def _load() -> Config:
+    _sync_cloud_preferences_if_linked()
     try:
         return load_config()
     except ConfigError as exc:

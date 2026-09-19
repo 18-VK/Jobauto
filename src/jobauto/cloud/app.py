@@ -234,11 +234,17 @@ def create_app() -> Flask:
     def api_get_prefs():
         with session() as s:
             user = s.get(User, g.user.id)
-            safe_yaml = _safe_preferences_yaml(user.preferences_yaml)
-            if safe_yaml != user.preferences_yaml:
-                user.preferences_yaml = safe_yaml
+            raw = (user.preferences_yaml or "").strip()
+            if not raw:
+                user.preferences_yaml = _default_preferences_yaml()
                 user.preferences_updated = utcnow()
                 s.commit()
+            else:
+                safe_yaml = _safe_preferences_yaml(raw)
+                if safe_yaml != raw:
+                    user.preferences_yaml = safe_yaml
+                    user.preferences_updated = utcnow()
+                    s.commit()
             return jsonify({"yaml": user.preferences_yaml,
                             "updated": _iso(user.preferences_updated)})
 
@@ -347,6 +353,17 @@ def create_app() -> Flask:
         auth.touch_agent(g.agent.id)
         with session() as s:
             user = s.get(User, g.agent.user_id)
+            raw = (user.preferences_yaml or "").strip()
+            if not raw:
+                user.preferences_yaml = _default_preferences_yaml()
+                user.preferences_updated = utcnow()
+                s.commit()
+            else:
+                safe_yaml = _safe_preferences_yaml(raw)
+                if safe_yaml != raw:
+                    user.preferences_yaml = safe_yaml
+                    user.preferences_updated = utcnow()
+                    s.commit()
             return jsonify({"yaml": user.preferences_yaml,
                             "updated": _iso(user.preferences_updated)})
 
