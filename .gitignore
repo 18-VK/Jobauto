@@ -1,0 +1,27 @@
+# Your real details and any portal selector overrides
+config/*.local.yaml
+config/portals/*.local.yaml
+
+# Browser profiles hold live session cookies -- never commit these
+data/
+!data/.gitkeep
+
+# Resumes are personal
+resumes/*
+!resumes/.gitkeep
+!resumes/README.md
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Downloaded helper binaries -- fetch them, do not commit them
+tools/*
+!tools/README.md
+
+# Local cloud test database
+cloud.db
+*.db-journal

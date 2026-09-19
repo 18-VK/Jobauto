@@ -1,0 +1,6 @@
+# Cloud deployment only -- no Playwright, no browser, much smaller image.
+Flask>=3.0
+PyYAML>=6.0
+SQLAlchemy>=2.0
+psycopg[binary]>=3.1
+gunicorn>=21.2

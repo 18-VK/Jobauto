@@ -1,0 +1,50 @@
+id: linkedin
+name: "LinkedIn"
+enabled: true
+base_url: "https://www.linkedin.com"
+adapter: "jobauto.portals.linkedin:LinkedInAdapter"
+
+# LinkedIn has the most aggressive bot detection of any portal here.
+# These overrides are deliberately conservative and the adapter REFUSES to
+# auto-submit even if application.auto_submit is globally true.
+risk:
+  force_manual_submit: true
+  max_actions_per_hour: 30
+  pacing_multiplier: 2.0
+
+auth:
+  mode: persistent_profile
+  login_url: "https://www.linkedin.com/login"
+  logged_in_selector: "img.global-nav__me-photo, .global-nav__me"
+  # If this appears we back off completely for the rest of the run.
+  challenge_selector: "#captcha-internal, .challenge-dialog, #error-for-password"
+
+search:
+  url_template: "https://www.linkedin.com/jobs/search/?keywords={keywords}&location={location}&f_TPR=r{seconds}&f_E={exp_codes}"
+  results_container: ".jobs-search-results-list, .scaffold-layout__list"
+  result_card: "li.jobs-search-results__list-item, div.job-card-container"
+  fields:
+    title: "a.job-card-list__title, .job-card-list__title--link"
+    url: {selector: "a.job-card-list__title, a.job-card-container__link", attr: "href"}
+    company: ".job-card-container__primary-description, .artdeco-entity-lockup__subtitle"
+    location: ".job-card-container__metadata-item"
+    salary: ".job-card-container__metadata-item--workplace-type"
+    posted: "time"
+  pagination:
+    next: "button[aria-label='View next page']"
+    max_pages: 3
+
+detail:
+  jd_body: ".jobs-description__content, #job-details"
+  easy_apply_badge: ".jobs-apply-button--top-card"
+
+apply:
+  # Only Easy Apply is automatable; external redirects are handed to you.
+  instant_button: "button.jobs-apply-button"
+  modal: ".jobs-easy-apply-modal"
+  next_button: "button[aria-label='Continue to next step']"
+  review_button: "button[aria-label='Review your application']"
+  submit_button: "button[aria-label='Submit application']"
+  question_container: ".jobs-easy-apply-form-section__grouping"
+  question_text: "label"
+  success_indicator: ".artdeco-inline-feedback--success, .jobs-post-apply"

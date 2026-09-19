@@ -1,0 +1,8 @@
+# Normalise to LF in the repo. Matters for the Dockerfile and shell scripts:
+# CRLF line endings break shell continuations when built on Linux.
+* text=auto eol=lf
+
+*.ps1   text eol=crlf
+*.exe   binary
+*.docx  binary
+*.pdf   binary

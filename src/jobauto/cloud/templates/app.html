@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jobauto</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='cloud.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot" id="agent-dot"></span>
+    <strong>jobauto</strong>
+    <span class="muted" id="agent-state">checking…</span>
+  </div>
+  <nav class="tabs">
+    <button class="tab is-active" data-view="jobs">Jobs <span class="pill" id="c-jobs">0</span></button>
+    <button class="tab" data-view="applications">Applications <span class="pill" id="c-apps">0</span></button>
+    <button class="tab" data-view="preferences">Preferences</button>
+    <button class="tab" data-view="devices">Devices</button>
+  </nav>
+  <div class="actions">
+    <span class="muted hide-sm">{{ email }}</span>
+    <a class="btn btn-quiet" href="{{ url_for('logout') }}">Sign out</a>
+  </div>
+</header>
+
+<div class="offline-bar" id="offline-bar" hidden>
+  Your PC is offline. You can still browse, edit preferences and queue jobs —
+  they run the moment the agent reconnects.
+</div>
+
+<main>
+
+{% if welcome %}
+<section class="welcome" id="welcome">
+  <h2>Account created</h2>
+  <p>
+    One step left: link your PC. Open <strong>Devices</strong>, copy the command,
+    and run it on the machine that will do the applying.
+  </p>
+  <button class="btn btn-primary" onclick="document.querySelector('[data-view=devices]').click()">
+    Go to Devices
+  </button>
+</section>
+{% endif %}
+
+<!-- ----------------------------------------------------------- jobs -->
+<section class="view is-active" id="view-jobs">
+  <div class="statgrid" id="statgrid"></div>
+
+  <div class="toolbar">
+    <div class="filters">
+      <label>Min score <input type="number" id="f-min" min="0" max="100" placeholder="all"></label>
+      <label>Portal <select id="f-portal"><option value="">all</option></select></label>
+    </div>
+    <div class="runners">
+      <button class="btn" id="btn-discover">Search portals</button>
+      <button class="btn btn-primary" id="btn-apply">Apply to queued</button>
+    </div>
+  </div>
+
+  <div id="jobs" class="cards"></div>
+  <p class="empty" id="jobs-empty" hidden>
+    No jobs yet. Hit <strong>Search portals</strong> — it runs on your PC and the
+    results appear here.
+  </p>
+</section>
+
+<!-- --------------------------------------------------- applications -->
+<section class="view" id="view-applications">
+  <div class="notice">
+    Applications are filled on your PC and left <strong>unsent</strong>. Open each
+    one, check it, submit it yourself, then mark it here.
+  </div>
+  <div id="apps" class="cards"></div>
+  <p class="empty" id="apps-empty" hidden>Nothing yet.</p>
+</section>
+
+<!-- ---------------------------------------------------- preferences -->
+<section class="view" id="view-preferences">
+  <div class="notice">
+    Saved in the cloud, so you can edit with your PC off. The agent picks up
+    changes on its next poll. Scoring weights must sum to 1.0.
+  </div>
+  <div class="prefhead">
+    <span class="muted" id="pref-updated"></span>
+    <div>
+      <button class="btn btn-quiet" id="btn-pref-reload">Revert</button>
+      <button class="btn btn-primary" id="btn-pref-save">Save</button>
+    </div>
+  </div>
+  <div id="pref-msg" class="msg" hidden></div>
+  <textarea id="pref-yaml" spellcheck="false"></textarea>
+</section>
+
+<!-- -------------------------------------------------------- devices -->
+<section class="view" id="view-devices">
+  <div class="notice">
+    Your agent token is a password. Anyone holding it can push data into this
+    account. Rotate it if it leaks.
+  </div>
+  <div id="devices" class="cards"></div>
+
+  <h3 class="section-h">Link a PC</h3>
+  <p class="muted">Run these two commands in the project folder on your PC:</p>
+  <pre class="code" id="link-cmd">loading…</pre>
+  <button class="btn btn-sm" id="btn-copy">Copy</button>
+
+  <h3 class="section-h">Recent activity</h3>
+  <div id="tasks" class="cards"></div>
+</section>
+
+</main>
+
+<script src="{{ url_for('static', filename='cloud.js') }}"></script>
+</body>
+</html>

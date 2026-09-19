@@ -1,0 +1,98 @@
+"""Naukri.com adapter.
+
+Two portal-specific quirks justify the override:
+  1. Apply opens a chatbot drawer that asks screening questions one at a time
+     rather than a single form.
+  2. Profile recency drives recruiter search ranking, so a daily self-touch is
+     worth doing (and is entirely your own account acting on itself).
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from ..models import Job
+from .base import PortalError
+from .generic import ConfigDrivenAdapter
+
+
+class NaukriAdapter(ConfigDrivenAdapter):
+
+    def open_application(self, job: Job) -> tuple[bool, str]:
+        on_form, note = super().open_application(job)
+        if not on_form:
+            return on_form, note
+
+        # If Naukri applied instantly with no questions, we are already done
+        # and there is nothing for you to review.
+        if self.applied_successfully():
+            return False, "applied instantly (no screening questions)"
+
+        drawer = self.sel("apply", "question_container")
+        if drawer:
+            try:
+                self.page.locator(drawer).first.wait_for(timeout=6000)
+            except Exception:
+                return False, "apply clicked but no question drawer appeared"
+        return True, ""
+
+    def read_questions(self) -> list[str]:
+        """The chatbot reveals one question at a time; we read whatever is
+        currently on screen."""
+        sel = self.sel("apply", "question_text")
+        if not sel:
+            return []
+        try:
+            return [t.strip() for t in self.page.locator(sel).all_inner_texts()
+                    if t.strip()]
+        except Exception:
+            return []
+
+    def answer(self, text: str) -> bool:
+        """Type one answer into the chatbot. Handles both the free-text box and
+        the radio-choice variant."""
+        choice_sel = self.sel("apply", "answer_choice")
+        if choice_sel:
+            try:
+                choices = self.page.locator(choice_sel)
+                for i in range(choices.count()):
+                    label = (choices.nth(i).inner_text(timeout=1500) or "").strip()
+                    if label and label.lower() in text.lower():
+                        choices.nth(i).click(timeout=3000)
+                        self.pace()
+                        return True
+            except Exception:
+                pass
+
+        input_sel = self.sel("apply", "answer_input")
+        if not input_sel:
+            return False
+        try:
+            box = self.page.locator(input_sel).first
+            box.click(timeout=4000)
+            box.fill(text, timeout=4000)
+            self.pace()
+            send = self.sel("apply", "answer_submit")
+            if send:
+                self.page.locator(send).first.click(timeout=4000)
+            self.pace()
+            return True
+        except Exception:
+            return False
+
+    def refresh_profile(self) -> bool:
+        """Re-save the resume headline unchanged. Naukri treats this as a
+        profile update and lifts you in recruiter search."""
+        cfg = self.portal.profile_refresh
+        if not cfg.get("enabled"):
+            return False
+        try:
+            self.page.goto(cfg["url"], wait_until="domcontentloaded", timeout=30000)
+            self.pace()
+            self.guard_challenge()
+            self.page.locator(cfg["headline_selector"]).first.click(timeout=8000)
+            self.pace()
+            self.page.locator(cfg["save_selector"]).first.click(timeout=8000)
+            self.pace()
+            return True
+        except Exception as exc:
+            raise PortalError(f"profile refresh failed: {type(exc).__name__}") from exc

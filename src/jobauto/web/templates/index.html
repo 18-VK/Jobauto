@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jobauto</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <strong>jobauto</strong>
+    <span class="muted" id="gate-note">review-then-submit</span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab is-active" data-view="shortlist">Shortlist <span class="pill" id="count-shortlist">0</span></button>
+    <button class="tab" data-view="pending">Pending <span class="pill" id="count-pending">0</span></button>
+    <button class="tab" data-view="preferences">Preferences</button>
+    <button class="tab" data-view="activity">Activity</button>
+  </nav>
+  <div class="actions">
+    <button class="btn" id="btn-discover">Discover</button>
+    <button class="btn btn-primary" id="btn-apply">Prepare&nbsp;5</button>
+  </div>
+</header>
+
+<div class="runbar" id="runbar" hidden>
+  <span class="spinner"></span>
+  <span id="runbar-name">working</span>
+  <span class="muted" id="runbar-last"></span>
+  <button class="link" id="btn-showlog">log</button>
+</div>
+
+<main>
+
+<!-- ------------------------------------------------------ shortlist -->
+<section class="view is-active" id="view-shortlist">
+  <div class="statgrid" id="statgrid"></div>
+
+  <div class="filters">
+    <label>Min score
+      <input type="number" id="f-minscore" min="0" max="100" step="1" placeholder="auto">
+    </label>
+    <label>Portal
+      <select id="f-portal"><option value="">all</option></select>
+    </label>
+    <button class="btn btn-quiet" id="btn-reload">Reload</button>
+  </div>
+
+  <div id="shortlist" class="cards"></div>
+  <p class="empty" id="shortlist-empty" hidden>
+    Nothing shortlisted yet. Hit <strong>Discover</strong> to search your portals,
+    or lower the score threshold in Preferences.
+  </p>
+</section>
+
+<!-- -------------------------------------------------------- pending -->
+<section class="view" id="view-pending">
+  <div class="notice">
+    These were filled in the browser but <strong>not submitted</strong>. Open each
+    one, check the answers, submit it yourself, then mark it here.
+  </div>
+  <div id="pending" class="cards"></div>
+  <p class="empty" id="pending-empty" hidden>Nothing waiting for review.</p>
+</section>
+
+<!-- ---------------------------------------------------- preferences -->
+<section class="view" id="view-preferences">
+  <div class="notice">
+    Edits are validated before saving — scoring weights must sum to 1.0. A config
+    that fails validation is rejected and the previous one kept.
+  </div>
+  <div class="prefhead">
+    <code id="pref-path" class="muted"></code>
+    <div>
+      <button class="btn btn-quiet" id="btn-pref-reload">Revert</button>
+      <button class="btn btn-primary" id="btn-pref-save">Save</button>
+    </div>
+  </div>
+  <div id="pref-msg" class="msg" hidden></div>
+  <textarea id="pref-yaml" spellcheck="false"></textarea>
+</section>
+
+<!-- ------------------------------------------------------- activity -->
+<section class="view" id="view-activity">
+  <div class="prefhead">
+    <span class="muted">Live output from the running task</span>
+    <button class="btn btn-quiet" id="btn-clearlog">Clear</button>
+  </div>
+  <pre id="log" class="log"></pre>
+  <div id="portalcaps" class="caps"></div>
+</section>
+
+</main>
+
+<script>window.JOBAUTO_TOKEN = new URLSearchParams(location.search).get('token') || '';</script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

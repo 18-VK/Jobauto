@@ -1,0 +1,47 @@
+id: indeed
+name: "Indeed India"
+enabled: true
+base_url: "https://in.indeed.com"
+adapter: "jobauto.portals.indeed:IndeedAdapter"
+
+# Indeed fronts Cloudflare and shows interstitials under load. The adapter
+# treats a challenge as a hard stop for the run rather than retrying.
+risk:
+  max_actions_per_hour: 40
+  pacing_multiplier: 1.5
+
+auth:
+  mode: persistent_profile
+  login_url: "https://secure.indeed.com/auth"
+  logged_in_selector: "[data-gnav-element-name='AccountMenu'], #gnav-AccountMenu"
+  challenge_selector: "#challenge-running, .cf-challenge, [id*='px-captcha']"
+
+search:
+  url_template: "https://in.indeed.com/jobs?q={keywords}&l={location}&fromage={days}&sort=date"
+  results_container: "#mosaic-provider-jobcards, .jobsearch-ResultsList"
+  result_card: "div.job_seen_beacon, li div.cardOutline"
+  fields:
+    title: "h2.jobTitle span[title], h2.jobTitle a"
+    url: {selector: "h2.jobTitle a", attr: "href"}
+    company: "[data-testid='company-name'], span.companyName"
+    location: "[data-testid='text-location'], div.companyLocation"
+    salary: "[data-testid='attribute_snippet_testid'], div.salary-snippet-container"
+    posted: "[data-testid='myJobsStateDate'], span.date"
+    summary: "div.job-snippet"
+  pagination:
+    next: "a[data-testid='pagination-page-next']"
+    max_pages: 4
+
+detail:
+  jd_body: "#jobDescriptionText"
+
+apply:
+  # "Applied on Indeed" flow only; everything else redirects to the employer
+  # ATS (Workday/Greenhouse/Lever) which we hand off to you.
+  instant_button: "#indeedApplyButton, .ia-IndeedApplyButton"
+  modal: ".ia-Modal, iframe[title='Job application form']"
+  next_button: "button[data-testid='continue-button']"
+  submit_button: "button[data-testid='submit-application']"
+  question_container: ".ia-Questions-item"
+  question_text: "label, legend"
+  success_indicator: ".ia-PostApply, [data-testid='application-submitted']"

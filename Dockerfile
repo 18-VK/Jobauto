@@ -1,0 +1,24 @@
+# Cloud app only. The automation engine never runs in a container -- it runs on
+# your PC, where your browser sessions live.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/src
+
+WORKDIR /app
+
+# The cloud app needs none of Playwright's browser tooling.
+COPY requirements-cloud.txt .
+RUN pip install --no-cache-dir -r requirements-cloud.txt
+
+COPY src/jobauto/__init__.py      src/jobauto/__init__.py
+COPY src/jobauto/cloud            src/jobauto/cloud
+COPY config/preferences.yaml      config/preferences.yaml
+
+EXPOSE 8000
+
+# 2 workers is plenty for one person and stays inside free-tier memory.
+CMD gunicorn "jobauto.cloud.app:get_app()" \
+    --bind "0.0.0.0:${PORT:-8000}" \
+    --workers 2 --threads 4 --timeout 60 --access-logfile -
