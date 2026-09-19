@@ -295,9 +295,10 @@ function replaceYamlSection(text, sectionName, replacement) {
 
   let endIndex = lines.length;
   for (let i = startIndex + 1; i < lines.length; i += 1) {
-    const trimmed = lines[i].trim();
+    const raw = lines[i];
+    const trimmed = raw.trim();
     if (!trimmed) continue;
-    if (/^[A-Za-z0-9_-]+:\s*(?:#.*)?$/.test(trimmed) && trimmed !== `${sectionName}:`) {
+    if (/^[A-Za-z0-9_-]+:\s*(?:#.*)?$/.test(raw) && raw === raw.trim()) {
       endIndex = i;
       break;
     }

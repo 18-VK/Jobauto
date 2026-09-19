@@ -232,8 +232,15 @@ def create_app() -> Flask:
     @app.get("/api/preferences")
     @auth.login_required
     def api_get_prefs():
-        return jsonify({"yaml": g.user.preferences_yaml,
-                        "updated": _iso(g.user.preferences_updated)})
+        with session() as s:
+            user = s.get(User, g.user.id)
+            safe_yaml = _safe_preferences_yaml(user.preferences_yaml)
+            if safe_yaml != user.preferences_yaml:
+                user.preferences_yaml = safe_yaml
+                user.preferences_updated = utcnow()
+                s.commit()
+            return jsonify({"yaml": user.preferences_yaml,
+                            "updated": _iso(user.preferences_updated)})
 
     @app.post("/api/preferences")
     @auth.login_required
@@ -505,6 +512,29 @@ def _validate_preferences(parsed: dict) -> str:
     if th and float(th.get("shortlist", 0)) > float(th.get("priority", 100)):
         return "thresholds.shortlist is above thresholds.priority"
     return ""
+
+
+def _default_preferences_yaml() -> str:
+    template = Path(__file__).resolve().parents[3] / "config" / "preferences.yaml"
+    try:
+        return template.read_text(encoding="utf-8")
+    except Exception:
+        return "search:\n  roles:\n    - title: \"Software Developer\"\n"
+
+
+def _safe_preferences_yaml(raw: str | None) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return _default_preferences_yaml()
+    try:
+        parsed = yaml.safe_load(text)
+        if not isinstance(parsed, dict):
+            raise ValueError("preferences must be a YAML mapping")
+        if _validate_preferences(parsed):
+            raise ValueError(_validate_preferences(parsed))
+        return text
+    except Exception:
+        return _default_preferences_yaml()
 
 
 app = None

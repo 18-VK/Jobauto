@@ -121,6 +121,8 @@ class LocalAgent:
         except ConfigError as exc:
             self.log(f"  cloud preferences failed validation, reverting: {exc}")
             target.unlink(missing_ok=True)
+            if (CONFIG_DIR / "preferences.yaml").exists():
+                self.log("  restored the shipped default preferences")
             return
         self._prefs_stamp = stamp
         self.log("  preferences synced from cloud")
