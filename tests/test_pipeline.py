@@ -5,6 +5,7 @@ shortlist -> cap accounting -- which is the bit unit tests cannot cover.
 """
 from __future__ import annotations
 
+import contextlib
 import subprocess
 from datetime import date
 from typing import Any, Iterator
@@ -273,6 +274,27 @@ def test_active_hours_allows_in_window(config):
     config.preferences["application"]["pacing"]["active_hours"] = [0, 24]
     ok, _ = within_active_hours(config)
     assert ok
+
+
+def test_apply_uses_only_targeted_fingerprints(config, db, monkeypatch):
+    run_discover(config, db, monkeypatch)
+    rows = db.shortlist(min_score=60, limit=10)
+    target = rows[0]["fingerprint"]
+    seen = []
+
+    class _FakeAdapter(FakeAdapter):
+        def open_application(self, job):
+            seen.append(job.fingerprint)
+            return False, "external ATS application -- apply by hand"
+
+    monkeypatch.setattr("jobauto.pipeline.session",
+                        lambda portal, cfg, headless=False: contextlib.nullcontext(None))
+    monkeypatch.setattr("jobauto.pipeline.registry.build",
+                        lambda portal, cfg, page: _FakeAdapter(portal, cfg, page))
+
+    result = Pipeline(config, db).apply(limit=10, fingerprints=[target])
+    assert result["external"] == 1
+    assert seen == [target]
 
 
 def test_force_manual_submit_cannot_be_overridden(config):

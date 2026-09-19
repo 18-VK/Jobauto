@@ -191,10 +191,15 @@ class LocalAgent:
                 result = pipe.discover(portal_ids=payload.get("portals"),
                                        headless=self.headless)
             elif kind == "apply":
+                fps = payload.get("fingerprints") or []
+                if isinstance(fps, list):
+                    fps = [str(item.get("fingerprint") if isinstance(item, dict) else item)
+                           for item in fps if item]
                 result = pipe.apply(portal_ids=payload.get("portals"),
                                     limit=int(payload.get("limit", 5)),
                                     min_score=payload.get("min_score"),
-                                    headless=self.headless)
+                                    headless=self.headless,
+                                    fingerprints=fps or None)
             elif kind == "refresh":
                 result = pipe.refresh_profiles(headless=self.headless)
             else:
@@ -220,11 +225,11 @@ class LocalAgent:
         pipe = Pipeline(config, db, log=lambda l: (lines.append(str(l)),
                                                    self.log(f"    {l}")))
         try:
-            pipe.apply(limit=len(fingerprints), headless=self.headless)
-            self.push_state(db, config)
-        finally:
             fps = [str(item.get("fingerprint", "")) for item in fingerprints]
             fps = [fp for fp in fps if fp]
+            pipe.apply(limit=len(fps), headless=self.headless, fingerprints=fps)
+            self.push_state(db, config)
+        finally:
             if fps:
                 self.cloud.clear_queued_jobs(fps)
 
@@ -237,13 +242,20 @@ class LocalAgent:
         if not task and not queued:
             return
 
+        queued_fps = [str(item.get("fingerprint", "")) for item in queued if item.get("fingerprint")]
+        if task and task.get("kind") == "apply" and queued_fps:
+            # Queue items are already being processed by the scheduled apply task;
+            # consuming them here prevents the next poll from reopening the same
+            # portal for the same job set.
+            self.cloud.clear_queued_jobs(queued_fps)
+
         config = load_config()
         db = Database()
         try:
             if task:
                 self.log(f"  picked up task {task['id']}: {task['kind']}")
                 self.run_task(task, db, config)
-            if queued:
+            elif queued:
                 self.apply_queued(queued, db, config)
         finally:
             db.close()

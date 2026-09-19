@@ -109,8 +109,14 @@ class Pipeline:
     # --------------------------------------------------------------- apply
     def apply(self, portal_ids: list[str] | None = None, limit: int = 10,
               min_score: float | None = None, dry_run: bool = False,
-              headless: bool = False) -> dict[str, int]:
-        """Prepare applications and run each past the review gate."""
+              headless: bool = False,
+              fingerprints: list[str] | None = None) -> dict[str, int]:
+        """Prepare applications and run each past the review gate.
+
+        `fingerprints` is a narrow allow-list used for queued jobs: we only apply
+        to the exact entries that were requested, instead of reopening the portal
+        for unrelated shortlisted jobs in the same cycle.
+        """
         ok, why = within_active_hours(self.config)
         if not ok and not dry_run:
             self.log(f"  Refusing to apply: {why}")
@@ -119,6 +125,9 @@ class Pipeline:
         threshold = (min_score if min_score is not None
                      else float(self.config.thresholds.get("shortlist", 60)))
         rows = self.db.shortlist(min_score=threshold, limit=limit * 3)
+        if fingerprints:
+            wanted = set(str(fp) for fp in fingerprints if fp)
+            rows = [r for r in rows if r["fingerprint"] in wanted]
         if not rows:
             self.log("  Nothing shortlisted. Run `discover` first.")
             return {}
