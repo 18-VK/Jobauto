@@ -18,7 +18,8 @@ COPY config/preferences.yaml      config/preferences.yaml
 
 EXPOSE 8000
 
-# 2 workers is plenty for one person and stays inside free-tier memory.
+# Respect WEB_CONCURRENCY -- Render sets it from the instance CPU count, and
+# hardcoding a higher number just wastes memory on a free instance.
 CMD gunicorn "jobauto.cloud.app:get_app()" \
     --bind "0.0.0.0:${PORT:-8000}" \
-    --workers 2 --threads 4 --timeout 60 --access-logfile -
+    --workers "${WEB_CONCURRENCY:-2}" --threads 4 --timeout 60 --access-logfile -

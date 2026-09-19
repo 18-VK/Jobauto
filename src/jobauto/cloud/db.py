@@ -14,7 +14,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import (Boolean, DateTime, Float, ForeignKey, Integer, String,
-                        Text, UniqueConstraint, create_engine, func, select)
+                        Text, UniqueConstraint, create_engine, func, select,
+                        text)
 from sqlalchemy.orm import (DeclarativeBase, Mapped, mapped_column,
                             relationship, sessionmaker)
 
@@ -181,6 +182,33 @@ def database_url() -> str:
     return url
 
 
+# Arbitrary but fixed: every worker must ask for the same lock for it to work.
+_DDL_LOCK_KEY = 0x6A6F6261  # "joba"
+
+
+def create_schema(engine) -> None:
+    """Create missing tables, safely when several workers boot at once.
+
+    `create_all` is check-then-create with no locking, so concurrent gunicorn
+    workers against an empty database all see "no tables", all issue CREATE
+    TABLE, and every worker but one dies with a UniqueViolation on
+    pg_type_typname_nsp_index. That took down the first Render deploy.
+
+    A transaction-scoped advisory lock serialises it: the first worker creates
+    the tables and commits, the rest wait, then find everything already there.
+    """
+    if engine.dialect.name != "postgresql":
+        # SQLite deployments are single-process; its own file locking suffices.
+        Base.metadata.create_all(engine)
+        return
+
+    with engine.begin() as conn:
+        conn.execute(text("SELECT pg_advisory_xact_lock(:key)"),
+                     {"key": _DDL_LOCK_KEY})
+        Base.metadata.create_all(conn)
+        # Lock releases when this transaction commits.
+
+
 def init_engine(url: str | None = None, echo: bool = False):
     global _engine, _Session
     url = url or database_url()
@@ -194,7 +222,7 @@ def init_engine(url: str | None = None, echo: bool = False):
                       pool_recycle=280)
     _engine = create_engine(url, **kwargs)
     _Session = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
-    Base.metadata.create_all(_engine)
+    create_schema(_engine)
     return _engine
 
 

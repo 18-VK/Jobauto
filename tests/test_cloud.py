@@ -385,3 +385,58 @@ def test_sqlite_fallback(monkeypatch, tmp_path):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("JOBAUTO_CLOUD_DB", str(tmp_path / "x.db"))
     assert clouddb.database_url().startswith("sqlite:///")
+
+
+# ------------------------------------------------- concurrent boot (regression)
+def test_create_schema_is_idempotent(tmp_path, monkeypatch):
+    """Booting twice against an existing database must be a no-op, not an error."""
+    monkeypatch.setenv("JOBAUTO_CLOUD_DB", str(tmp_path / "idem.db"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    clouddb.reset_engine()
+    engine = clouddb.init_engine()
+    clouddb.create_schema(engine)      # second boot
+    clouddb.create_schema(engine)      # third
+    clouddb.reset_engine()
+
+
+def test_concurrent_init_does_not_raise(tmp_path, monkeypatch):
+    """Regression: gunicorn boots several workers at once and they all called
+    create_all against an empty database, so every worker but one died with
+    UniqueViolation on pg_type_typname_nsp_index. That broke the first Render
+    deploy. create_schema now serialises the DDL."""
+    import threading
+
+    monkeypatch.setenv("JOBAUTO_CLOUD_DB", str(tmp_path / "race.db"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    clouddb.reset_engine()
+    engine = clouddb.init_engine()
+
+    errors: list[Exception] = []
+    barrier = threading.Barrier(6)
+
+    def boot() -> None:
+        try:
+            barrier.wait(timeout=10)     # maximise overlap
+            clouddb.create_schema(engine)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=boot) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, f"concurrent schema creation raised: {errors}"
+    clouddb.reset_engine()
+
+
+def test_postgres_path_uses_an_advisory_lock():
+    """The SQLite path cannot exercise the lock, so assert the Postgres branch
+    actually takes one -- that is the entire fix."""
+    import inspect
+    source = inspect.getsource(clouddb.create_schema)
+    assert "pg_advisory_xact_lock" in source
+    assert 'dialect.name != "postgresql"' in source
