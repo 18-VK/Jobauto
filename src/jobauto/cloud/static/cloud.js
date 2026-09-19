@@ -257,8 +257,8 @@ function parseSearchProfileFromYaml(text) {
 }
 
 function fillQuickFilterEditorFromYaml(text) {
-  const data = parseSearchProfileFromYaml(text);
-  const roles = [...new Set(data.roles.length ? data.roles : ['Software Developer', 'Backend Developer'])];
+  const data = parseSearchProfileFromYaml(text || '');
+  const roles = [...new Set(((data.roles && data.roles.length) ? data.roles : ['Software Developer', 'Backend Developer']))];
   const rolesWrap = $('#role-list');
   rolesWrap.innerHTML = '';
   roles.forEach((role) => {
