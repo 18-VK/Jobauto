@@ -11,6 +11,9 @@ cannot cascade to the others.
 from __future__ import annotations
 
 import contextlib
+import json
+import os
+import subprocess
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -32,6 +35,77 @@ DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 class BrowserSession:
     """Owns one persistent browser context for one portal."""
+
+    @staticmethod
+    def _cleanup_stale_browser_session(profile_dir: Path) -> None:
+        """Close Chrome/Chromium instances still holding the same profile.
+
+        Persistent Playwright contexts are keyed by the profile directory. If a
+        stale browser from a previous run is still alive, the next launch fails
+        with "Opening in existing browser session" even though the user is not
+        running anything manually from the UI. This is a platform-safe cleanup:
+        we only kill the processes whose command line contains the exact profile
+        directory we are about to reopen.
+        """
+        if os.name != "nt" or not profile_dir:
+            return
+
+        profile_str = str(profile_dir).lower().replace("\\", "/")
+        try:
+            proc = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    "(Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'chrome|chromium|msedge' } | "
+                    "Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress)",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception:
+            return
+
+        if proc.returncode not in (0, 1):
+            return
+
+        try:
+            rows = json.loads(proc.stdout or "[]")
+        except json.JSONDecodeError:
+            return
+
+        if isinstance(rows, dict):
+            rows = [rows]
+
+        pids: list[int] = []
+        for row in rows:
+            cmd = str(row.get("CommandLine", "") or "")
+            if not cmd:
+                continue
+            lower_cmd = cmd.lower()
+            if profile_str in lower_cmd.replace("\\", "/") or str(profile_dir).lower() in lower_cmd:
+                pid = row.get("ProcessId")
+                if isinstance(pid, (int, str)):
+                    try:
+                        pids.append(int(pid))
+                    except ValueError:
+                        pass
+
+        for pid in sorted(set(pids)):
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                     f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except Exception:
+                pass
 
     def __init__(self, portal: PortalConfig, config: Config, headless: bool = False):
         self.portal = portal
@@ -59,6 +133,7 @@ class BrowserSession:
                 "  python -m playwright install chromium"
             ) from exc
 
+        self._cleanup_stale_browser_session(self.profile_dir)
         self._pw = sync_playwright().start()
         self._ctx = self._pw.chromium.launch_persistent_context(
             user_data_dir=str(self.profile_dir),

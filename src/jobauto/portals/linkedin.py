@@ -30,14 +30,33 @@ class LinkedInAdapter(ConfigDrivenAdapter):
         self.pace()
         self.guard_challenge()
 
-        button = self.sel("apply", "instant_button")
-        try:
-            btn = self.page.locator(button).first
-            label = (btn.inner_text(timeout=4000) or "").lower()
-        except Exception:
+        selectors = []
+        primary = self.sel("apply", "instant_button")
+        if primary:
+            selectors.append(primary)
+        selectors.extend([
+            "button.jobs-apply-button",
+            "button.jobs-apply-button--top-card",
+            "button.jobs-apply-button--secondary",
+            "a[href*='apply'][href*='linkedin']",
+            "a[href*='/apply/']",
+        ])
+
+        btn = None
+        for selector in selectors:
+            try:
+                candidate = self.page.locator(selector).first
+                if candidate and candidate.is_visible(timeout=2500):
+                    btn = candidate
+                    break
+            except Exception:
+                continue
+
+        if not btn:
             return False, "no apply button found"
 
-        if "easy apply" not in label:
+        label = (btn.inner_text(timeout=4000) or "").lower()
+        if "easy apply" not in label and "easy-apply" not in label:
             return False, "external ATS application -- apply by hand"
 
         try:

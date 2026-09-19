@@ -5,6 +5,7 @@ shortlist -> cap accounting -- which is the bit unit tests cannot cover.
 """
 from __future__ import annotations
 
+import subprocess
 from datetime import date
 from typing import Any, Iterator
 
@@ -124,6 +125,31 @@ def run_discover(config, db, monkeypatch) -> dict[str, int]:
                         lambda portal, cfg, page: FakeAdapter(portal, cfg, page))
 
     return Pipeline(config, db, log=lambda *_: None).discover()
+
+
+def test_browser_cleanup_kills_stale_chromium_for_same_profile(monkeypatch, tmp_path):
+    from jobauto.browser import BrowserSession
+
+    profile_dir = tmp_path / "browser" / "naukri"
+    profile_dir.mkdir(parents=True)
+    captured = {}
+
+    def fake_run(cmd, capture_output=True, text=True, shell=False, check=False):
+        captured["cmd"] = cmd
+        if "Get-CimInstance" in str(cmd):
+            payload = (
+                '[{"ProcessId":9999,"Name":"chrome.exe","CommandLine":'
+                f'"--user-data-dir={profile_dir} --remote-debugging-port=9222"}]'
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("jobauto.browser.subprocess.run", fake_run)
+
+    BrowserSession._cleanup_stale_browser_session(profile_dir)
+
+    assert captured["cmd"][0] == "powershell"
+    assert "Stop-Process" in " ".join(captured["cmd"])
 
 
 def test_ensure_logged_in_allows_signed_in_profile_on_stale_selector():
