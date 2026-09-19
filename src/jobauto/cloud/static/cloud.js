@@ -238,6 +238,10 @@ function parseSearchProfileFromYaml(text) {
     return m ? m[1].trim() : '';
   };
 
+  const applyBlock = text.match(/application:\s*\n([\s\S]*?)\n\s*resume:/) || text.match(/application:\s*\n([\s\S]*?)\n\s*$/);
+  const appSrc = applyBlock ? applyBlock[1] : '';
+  const activeMatch = appSrc.match(/active_hours:\s*\[(\d+)\s*,\s*(\d+)\]/);
+
   return {
     roles: parseRolesFromYaml(text),
     location: get(/\n\s*preferred:\s*\[(.*?)\]/s) || get(/\n\s*preferred:\s*\[([^\]]+)\]/),
@@ -245,6 +249,8 @@ function parseSearchProfileFromYaml(text) {
     expMin: get(/\n\s*min_years:\s*(\d+)/) || '2',
     expMax: get(/\n\s*max_years:\s*(\d+)/) || '8',
     salaryMin: get(/\n\s*minimum_acceptable_lpa:\s*(\d+(?:\.\d+)?)/) || '10',
+    activeStart: activeMatch ? activeMatch[1] : '8',
+    activeEnd: activeMatch ? activeMatch[2] : '22',
     include: get(/\n\s*include:\s*\[(.*?)\]/s) || '',
     exclude: get(/\n\s*exclude:\s*\[(.*?)\]/s) || '',
   };
@@ -270,6 +276,8 @@ function fillQuickFilterEditorFromYaml(text) {
   $('#exp-min').value = data.expMin || '2';
   $('#exp-max').value = data.expMax || '8';
   $('#salary-min').value = data.salaryMin || '10';
+  $('#active-hours-start').value = data.activeStart || '8';
+  $('#active-hours-end').value = data.activeEnd || '22';
   const selectedModes = (data.workModes && data.workModes.length ? data.workModes : ['remote', 'hybrid', 'onsite']);
   document.querySelectorAll('.work-mode-check').forEach((cb) => {
     cb.checked = selectedModes.includes(cb.value);
@@ -288,7 +296,9 @@ function makeSearchYamlFromForm() {
   const exclude = $('#keywords-exclude').value.split(',').map((x) => x.trim()).filter(Boolean);
 
   const roleYaml = roles.map((role) => `    - title: "${role.replace(/"/g, '\\"')}"\n      weight: 1.0\n      aliases: ["${role.replace(/"/g, '\\"')}" ]`).join('\n');
-  const searchBlock = `search:\n  roles:\n${roleYaml}\n  keywords:\n    include: [${include.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    exclude: [${exclude.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n  experience:\n    min_years: ${Number($('#exp-min').value || 2)}\n    max_years: ${Number($('#exp-max').value || 8)}\n    current_years: ${(Number($('#exp-min').value || 2) + Number($('#exp-max').value || 8)) / 2}\n  locations:\n    preferred: [${locations.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    acceptable: []\n    blocked: []\n    work_mode: [${modes.map((x) => `"${x}"`).join(', ')}]\n    relocate: false\n  compensation:\n    currency: "INR"\n    current_ctc_lpa: ${(Number($('#salary-min').value || 10))}\n    expected_ctc_lpa: ${(Number($('#salary-min').value || 10) + 4)}\n    minimum_acceptable_lpa: ${Number($('#salary-min').value || 10)}\n    negotiable: true\n  company:\n    blocked: []\n    preferred: []\n    exclude_staffing_agencies: false\n    min_employee_rating: 3.0\n  posting:\n    max_age_days: 21\n    require_salary_disclosed: false\n`;
+  const start = Number($('#active-hours-start').value || 8);
+  const end = Number($('#active-hours-end').value || 22);
+  const searchBlock = `search:\n  roles:\n${roleYaml}\n  keywords:\n    include: [${include.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    exclude: [${exclude.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n  experience:\n    min_years: ${Number($('#exp-min').value || 2)}\n    max_years: ${Number($('#exp-max').value || 8)}\n    current_years: ${(Number($('#exp-min').value || 2) + Number($('#exp-max').value || 8)) / 2}\n  locations:\n    preferred: [${locations.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    acceptable: []\n    blocked: []\n    work_mode: [${modes.map((x) => `"${x}"`).join(', ')}]\n    relocate: false\n  compensation:\n    currency: "INR"\n    current_ctc_lpa: ${(Number($('#salary-min').value || 10))}\n    expected_ctc_lpa: ${(Number($('#salary-min').value || 10) + 4)}\n    minimum_acceptable_lpa: ${Number($('#salary-min').value || 10)}\n    negotiable: true\n  company:\n    blocked: []\n    preferred: []\n    exclude_staffing_agencies: false\n    min_employee_rating: 3.0\n  posting:\n    max_age_days: 21\n    require_salary_disclosed: false\napplication:\n  pacing:\n    active_hours: [${start}, ${end}]\n`;
   return searchBlock;
 }
 
