@@ -287,7 +287,6 @@ function fillQuickFilterEditorFromYaml(text) {
 }
 
 function replaceYamlSection(text, sectionName, replacement) {
-  const nextSection = sectionName === 'search' ? 'scoring' : 'resume';
   const lines = text.split('\n');
   const startIndex = lines.findIndex((line) => line.trim() === `${sectionName}:`);
   if (startIndex < 0) {
@@ -297,22 +296,17 @@ function replaceYamlSection(text, sectionName, replacement) {
   let endIndex = lines.length;
   for (let i = startIndex + 1; i < lines.length; i += 1) {
     const trimmed = lines[i].trim();
-    if (trimmed && /^[A-Za-z0-9_-]+:\s*(?:#.*)?$/.test(trimmed)) {
+    if (!trimmed) continue;
+    if (/^[A-Za-z0-9_-]+:\s*(?:#.*)?$/.test(trimmed) && trimmed !== `${sectionName}:`) {
       endIndex = i;
       break;
     }
   }
 
-  if (nextSection) {
-    const nextIndex = lines.findIndex((line, idx) => idx > startIndex && line.trim() === `${nextSection}:`);
-    if (nextIndex >= 0) endIndex = nextIndex;
-  }
-
   const before = lines.slice(0, startIndex).join('\n').trimEnd();
   const after = lines.slice(endIndex).join('\n').trimStart();
-  const prefix = before ? `${before}\n\n` : '';
-  const suffix = after ? `\n\n${after}` : '\n';
-  return `${prefix}${replacement.trim()}${suffix}`;
+  const bits = [before, replacement.trim(), after].filter((part) => part && part.trim());
+  return bits.join('\n\n');
 }
 
 function makeSearchYamlFromForm() {
