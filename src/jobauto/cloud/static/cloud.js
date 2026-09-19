@@ -136,7 +136,7 @@ function jobCard(job) {
   const foot = el('div', 'card-foot');
   foot.append(el('span', 'muted', job.applied ? 'already applied' : ''));
 
-  const open = el('a', 'btn btn-sm', 'Open listing');
+  const open = el('a', 'btn btn-sm', 'Visit job description');
   open.href = job.url; open.target = '_blank'; open.rel = 'noopener';
   foot.append(open);
 
@@ -200,7 +200,7 @@ async function loadApps() {
       const foot = el('div', 'card-foot');
       foot.append(el('span', 'muted', 'filled on your PC, not sent'));
 
-      const open = el('a', 'btn btn-sm', 'Open & submit');
+      const open = el('a', 'btn btn-sm', 'Visit job status');
       open.href = app.url; open.target = '_blank'; open.rel = 'noopener';
       foot.append(open);
 
@@ -222,10 +222,81 @@ async function loadApps() {
 }
 
 /* -------------------------------------------------------- preferences */
+function parseRolesFromYaml(text) {
+  const block = text.match(/search:\s*\n([\s\S]*?)\n\s*scoring:/);
+  if (!block) return [];
+  const matches = [...block[1].matchAll(/^\s*-\s*title:\s*["']?([^"'\n]+)["']?/gm)];
+  return matches.map((m) => m[1].trim()).filter(Boolean);
+}
+
+function parseSearchProfileFromYaml(text) {
+  const block = text.match(/search:\s*\n([\s\S]*?)\n\s*scoring:/);
+  if (!block) return {};
+  const src = block[1];
+  const get = (re) => {
+    const m = src.match(re);
+    return m ? m[1].trim() : '';
+  };
+
+  return {
+    roles: parseRolesFromYaml(text),
+    location: get(/\n\s*preferred:\s*\[(.*?)\]/s) || get(/\n\s*preferred:\s*\[([^\]]+)\]/),
+    workModes: [...src.matchAll(/\bwork_mode:\s*\[(.*?)\]/gs)].flatMap((m) => (m[1].match(/['\"]?([A-Za-z-]+)['\"]?/g) || []).map((s) => s.replace(/[\"'\s]/g, ''))),
+    expMin: get(/\n\s*min_years:\s*(\d+)/) || '2',
+    expMax: get(/\n\s*max_years:\s*(\d+)/) || '8',
+    salaryMin: get(/\n\s*minimum_acceptable_lpa:\s*(\d+(?:\.\d+)?)/) || '10',
+    include: get(/\n\s*include:\s*\[(.*?)\]/s) || '',
+    exclude: get(/\n\s*exclude:\s*\[(.*?)\]/s) || '',
+  };
+}
+
+function fillQuickFilterEditorFromYaml(text) {
+  const data = parseSearchProfileFromYaml(text);
+  const roles = [...new Set(data.roles.length ? data.roles : ['Software Developer', 'Backend Developer'])];
+  const rolesWrap = $('#role-list');
+  rolesWrap.innerHTML = '';
+  roles.forEach((role) => {
+    const label = el('label');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = role;
+    input.checked = true;
+    label.append(input, document.createTextNode(' ' + role));
+    rolesWrap.append(label);
+  });
+
+  $('#custom-role').value = '';
+  $('#pref-location').value = (data.location || 'Noida, Delhi NCR, Remote').replace(/\[|\]|\"/g, '').replace(/,/g, ', ');
+  $('#exp-min').value = data.expMin || '2';
+  $('#exp-max').value = data.expMax || '8';
+  $('#salary-min').value = data.salaryMin || '10';
+  const selectedModes = (data.workModes && data.workModes.length ? data.workModes : ['remote', 'hybrid', 'onsite']);
+  document.querySelectorAll('.work-mode-check').forEach((cb) => {
+    cb.checked = selectedModes.includes(cb.value);
+  });
+  $('#keywords-include').value = (data.include || 'REST API, SQL Server, .NET').replace(/['\"]/g, '').replace(/\s*,\s*/g, ', ');
+  $('#keywords-exclude').value = (data.exclude || 'intern, contract, night shift').replace(/['\"]/g, '').replace(/\s*,\s*/g, ', ');
+}
+
+function makeSearchYamlFromForm() {
+  const roleChecklist = [...document.querySelectorAll('#role-list input:checked')].map((el) => el.value.trim()).filter(Boolean);
+  const customRole = $('#custom-role').value.trim();
+  const roles = [...new Set([...roleChecklist, ...(customRole ? [customRole] : [])])];
+  const locations = $('#pref-location').value.split(',').map((x) => x.trim()).filter(Boolean);
+  const modes = [...document.querySelectorAll('.work-mode-check:checked')].map((el) => el.value);
+  const include = $('#keywords-include').value.split(',').map((x) => x.trim()).filter(Boolean);
+  const exclude = $('#keywords-exclude').value.split(',').map((x) => x.trim()).filter(Boolean);
+
+  const roleYaml = roles.map((role) => `    - title: "${role.replace(/"/g, '\\"')}"\n      weight: 1.0\n      aliases: ["${role.replace(/"/g, '\\"')}" ]`).join('\n');
+  const searchBlock = `search:\n  roles:\n${roleYaml}\n  keywords:\n    include: [${include.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    exclude: [${exclude.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n  experience:\n    min_years: ${Number($('#exp-min').value || 2)}\n    max_years: ${Number($('#exp-max').value || 8)}\n    current_years: ${(Number($('#exp-min').value || 2) + Number($('#exp-max').value || 8)) / 2}\n  locations:\n    preferred: [${locations.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    acceptable: []\n    blocked: []\n    work_mode: [${modes.map((x) => `"${x}"`).join(', ')}]\n    relocate: false\n  compensation:\n    currency: "INR"\n    current_ctc_lpa: ${(Number($('#salary-min').value || 10))}\n    expected_ctc_lpa: ${(Number($('#salary-min').value || 10) + 4)}\n    minimum_acceptable_lpa: ${Number($('#salary-min').value || 10)}\n    negotiable: true\n  company:\n    blocked: []\n    preferred: []\n    exclude_staffing_agencies: false\n    min_employee_rating: 3.0\n  posting:\n    max_age_days: 21\n    require_salary_disclosed: false\n`;
+  return searchBlock;
+}
+
 async function loadPrefs() {
   try {
     const d = await api('/api/preferences');
     $('#pref-yaml').value = d.yaml;
+    fillQuickFilterEditorFromYaml(d.yaml);
     $('#pref-updated').textContent = 'last saved ' + ago(d.updated);
     $('#pref-msg').hidden = true;
   } catch (e) { prefMsg(e.message, false); }
@@ -237,6 +308,14 @@ function prefMsg(text, ok) {
   b.textContent = text;
   b.hidden = false;
 }
+
+$('#btn-pref-apply').onclick = () => {
+  const yaml = $('#pref-yaml').value;
+  const updated = yaml.replace(/search:\s*\n([\s\S]*?)\n\s*scoring:/, makeSearchYamlFromForm() + '\n  // keep remaining settings')
+    .replace(/\n\s*\/\/ keep remaining settings/, '');
+  $('#pref-yaml').value = updated.replace(/\n\s*scoring:/, '\n\nscoring:');
+  prefMsg('Quick filters applied to the YAML editor.', true);
+};
 
 $('#btn-pref-save').onclick = async () => {
   const btn = $('#btn-pref-save');

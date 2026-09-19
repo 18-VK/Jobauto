@@ -84,12 +84,61 @@
     Saved in the cloud, so you can edit with your PC off. The agent picks up
     changes on its next poll. Scoring weights must sum to 1.0.
   </div>
-  <div class="prefhead">
-    <span class="muted" id="pref-updated"></span>
-    <div>
+
+  <div class="filter-panel">
+    <h3 class="section-h">Quick search filters</h3>
+    <div class="quick-grid">
+      <div>
+        <label>Roles</label>
+        <div id="role-list" class="checklist"></div>
+      </div>
+      <div>
+        <label>Custom role</label>
+        <input id="custom-role" type="text" placeholder="e.g. Data Engineer, QA Automation" />
+      </div>
+      <div>
+        <label>Location(s)</label>
+        <input id="pref-location" type="text" placeholder="Noida, Delhi NCR, Remote" />
+      </div>
+      <div>
+        <label>Work mode</label>
+        <div class="checklist compact">
+          <label><input type="checkbox" value="remote" class="work-mode-check" checked> Remote</label>
+          <label><input type="checkbox" value="hybrid" class="work-mode-check" checked> Hybrid</label>
+          <label><input type="checkbox" value="onsite" class="work-mode-check" checked> On-site</label>
+        </div>
+      </div>
+      <div>
+        <label>Experience</label>
+        <div class="range-pair">
+          <input id="exp-min" type="number" min="0" step="1" value="2" />
+          <span>to</span>
+          <input id="exp-max" type="number" min="0" step="1" value="8" />
+          years
+        </div>
+      </div>
+      <div>
+        <label>Minimum salary</label>
+        <input id="salary-min" type="number" min="0" step="1" value="10" />
+      </div>
+      <div>
+        <label>Include keywords</label>
+        <input id="keywords-include" type="text" placeholder="REST API, SQL Server, .NET" />
+      </div>
+      <div>
+        <label>Exclude keywords</label>
+        <input id="keywords-exclude" type="text" placeholder="intern, contract, bpo" />
+      </div>
+    </div>
+    <div class="prefhead">
+      <button class="btn btn-quiet" id="btn-pref-apply">Apply quick filters</button>
       <button class="btn btn-quiet" id="btn-pref-reload">Revert</button>
       <button class="btn btn-primary" id="btn-pref-save">Save</button>
     </div>
+  </div>
+
+  <div class="prefhead">
+    <span class="muted" id="pref-updated"></span>
   </div>
   <div id="pref-msg" class="msg" hidden></div>
   <textarea id="pref-yaml" spellcheck="false"></textarea>
