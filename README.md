@@ -47,7 +47,25 @@ network and there are no ports to forward.
 Queue five jobs from your phone on the train. They're filled in when you get
 home and open your laptop.
 
-**Setup takes about ten minutes:** [docs/DEPLOY.md](docs/DEPLOY.md)
+### Try it before deploying
+
+```bash
+python -m jobauto cloud          # http://127.0.0.1:5058
+```
+
+Same app, same login, running on your machine. First visit creates your account.
+
+### Then deploy it
+
+```powershell
+.\push-to-github.ps1             # private repo, one browser sign-in
+```
+
+Then <https://render.com> → **New → Blueprint** → pick the repo → **Apply**.
+Render reads [render.yaml](render.yaml), creates the web service and a free
+Postgres, and hands you a permanent URL.
+
+Full walkthrough: **[docs/DEPLOY.md](docs/DEPLOY.md)** — about ten minutes.
 
 ---
 
@@ -127,7 +145,7 @@ database.
 ### Dashboard
 
 ```bash
-python -m jobauto web             # http://127.0.0.1:5000
+python -m jobauto web             # http://127.0.0.1:5057
 ```
 
 Ranked shortlist with the score breakdown on each card, a Pending tab for

@@ -1,8 +1,12 @@
 # Deploy your own jobauto
 
-You end up with a permanent URL like `https://jobauto-xyz.onrender.com`, an
-email-and-password login, and a dashboard that works whether or not your PC is
-on. Free, no card.
+You end up with a permanent URL, an email-and-password login, and a dashboard
+that works whether or not your PC is on. Free, no card.
+
+> **Nothing is deployed until you do step 2.** Any `onrender.com` address in
+> this guide is a made-up placeholder — Render generates your real one during
+> deployment and it will not exist before then. To see the app working first,
+> run `python -m jobauto cloud` and open <http://127.0.0.1:5058>.
 
 Two pieces:
 
@@ -14,6 +18,18 @@ Two pieces:
 The agent connects **outbound** to the cloud, so nothing is exposed on your home
 network. Your portal logins never leave your machine — if the cloud database
 leaked tomorrow, nobody would gain access to a single job portal.
+
+## The short version
+
+```powershell
+.\push-to-github.ps1      # signs in, creates the private repo, pushes
+```
+
+Then open <https://render.com> → sign up with GitHub → **New → Blueprint** →
+pick the repo → **Apply**. About ten minutes total, most of it waiting for the
+build.
+
+The rest of this page is the same thing with explanations.
 
 ---
 
@@ -43,7 +59,9 @@ Private is fine — Render reads private repos once you connect your GitHub acco
    free Postgres database. Click **Apply**.
 4. Wait ~5 minutes for the first build.
 
-You get a URL like `https://jobauto-xyz.onrender.com`. That URL is permanent.
+Render then shows **your** URL at the top of the service page — something like
+`https://jobauto-a1b2.onrender.com`, with a suffix Render picks. That URL is
+permanent. Use it everywhere below in place of `<YOUR-URL>`.
 
 > **Free tier naps.** Render free instances sleep after ~15 minutes of no
 > traffic and take ~30 seconds to wake. The agent retries with backoff, so a
@@ -65,7 +83,7 @@ Open **Devices** in the dashboard and copy the two commands. On your PC:
 ```powershell
 cd D:\Data\Claude
 $env:PYTHONPATH="src"
-python -m jobauto link --url https://jobauto-xyz.onrender.com --token YOUR_TOKEN
+python -m jobauto link --url <YOUR-URL> --token <YOUR-TOKEN>
 python -m jobauto agent
 ```
 
