@@ -83,6 +83,12 @@ class CloudClient:
         return self._call("POST", "/api/agent/applications",
                           json={"applications": apps})
 
+    def clear_queued_jobs(self, fingerprints: list[str]) -> dict:
+        if not fingerprints:
+            return {"ok": True, "cleared": 0}
+        return self._call("POST", "/api/agent/jobs/clear",
+                          json={"fingerprints": fingerprints})
+
     def task_result(self, task_id: int, status: str, result: dict,
                     log: str = "") -> dict:
         return self._call("POST", f"/api/agent/tasks/{task_id}/result",
@@ -216,8 +222,11 @@ class LocalAgent:
         try:
             pipe.apply(limit=len(fingerprints), headless=self.headless)
             self.push_state(db, config)
-        except Exception as exc:
-            self.log(f"  queued apply failed: {type(exc).__name__}: {exc}")
+        finally:
+            fps = [str(item.get("fingerprint", "")) for item in fingerprints]
+            fps = [fp for fp in fps if fp]
+            if fps:
+                self.cloud.clear_queued_jobs(fps)
 
     # ------------------------------------------------------------- loop
     def tick(self) -> None:

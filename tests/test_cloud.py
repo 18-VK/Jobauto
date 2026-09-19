@@ -291,6 +291,21 @@ def test_user_marks_application_submitted(client):
     assert client.get("/api/summary").get_json()["counts"]["submitted"] == 1
 
 
+def test_agent_drains_queued_jobs_after_processing(client):
+    signup(client)
+    tok = agent_token(client)
+    client.post("/api/agent/jobs", headers=H(tok), json={"jobs": [{
+        "fingerprint": "f1", "portal": "naukri", "title": "Backend Developer",
+        "company": "Acme", "url": "https://x/1", "score": 90.0}]})
+    job_id = client.get("/api/jobs").get_json()["jobs"][0]["id"]
+    client.post(f"/api/jobs/{job_id}/queue")
+
+    res = client.post("/api/agent/jobs/clear", headers=H(tok),
+                      json={"fingerprints": ["f1"]})
+    assert res.get_json()["cleared"] == 1
+    assert client.get("/api/jobs").get_json()["jobs"][0]["state"] == "done"
+
+
 # ------------------------------------------------------- preferences
 def test_preferences_seeded_on_signup(client):
     signup(client)

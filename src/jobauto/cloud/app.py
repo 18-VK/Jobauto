@@ -396,6 +396,29 @@ def create_app() -> Flask:
             } for j in queued]
             return jsonify(payload)
 
+    @app.post("/api/agent/jobs/clear")
+    @auth.agent_required
+    def agent_clear_queued_jobs():
+        """Consume the queue once the agent has attempted the queued apply."""
+        body = request.get_json(silent=True) or {}
+        fps = [str(p) for p in (body.get("fingerprints") or []) if str(p).strip()]
+        if not fps:
+            return jsonify({"ok": True, "cleared": 0})
+
+        with session() as s:
+            cleared = 0
+            for job in s.scalars(
+                select(CloudJob).where(
+                    CloudJob.user_id == g.agent.user_id,
+                    CloudJob.fingerprint.in_(fps),
+                    CloudJob.state == "queued",
+                )
+            ).all():
+                job.state = "done"
+                cleared += 1
+            s.commit()
+            return jsonify({"ok": True, "cleared": cleared})
+
     @app.post("/api/agent/jobs")
     @auth.agent_required
     def agent_push_jobs():
