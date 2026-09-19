@@ -26,7 +26,13 @@ def within_active_hours(config: Config) -> tuple[bool, str]:
         return True, ""
     lo, hi = int(hours[0]), int(hours[1])
     now = datetime.now().hour
-    if lo <= now < hi:
+    if lo == hi:
+        return True, ""
+    if lo < hi:
+        ok = lo <= now < hi
+    else:
+        ok = now >= lo or now < hi
+    if ok:
         return True, ""
     return False, f"outside active hours {lo:02d}:00-{hi:02d}:00 (now {now:02d}:00)"
 

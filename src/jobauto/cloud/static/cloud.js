@@ -229,6 +229,28 @@ function parseRolesFromYaml(text) {
   return matches.map((m) => m[1].trim()).filter(Boolean);
 }
 
+function extractYamlSection(text, sectionName) {
+  const lines = text.split('\n');
+  let start = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].trim() === `${sectionName}:`) {
+      start = i + 1;
+      break;
+    }
+  }
+  if (start < 0) return '';
+
+  const body = [];
+  for (let i = start; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^[A-Za-z0-9_-]+:\s*(?:#.*)?$/.test(line) && line === line.trim()) {
+      break;
+    }
+    body.push(line);
+  }
+  return body.join('\n');
+}
+
 function parseSearchProfileFromYaml(text) {
   const block = text.match(/search:\s*\n([\s\S]*?)\n\s*scoring:/);
   if (!block) return {};
@@ -238,8 +260,7 @@ function parseSearchProfileFromYaml(text) {
     return m ? m[1].trim() : '';
   };
 
-  const applyBlock = text.match(/application:\s*\n([\s\S]*?)\n\s*resume:/) || text.match(/application:\s*\n([\s\S]*?)\n\s*$/);
-  const appSrc = applyBlock ? applyBlock[1] : '';
+  const appSrc = extractYamlSection(text, 'application');
   const activeMatch = appSrc.match(/active_hours:\s*\[(\d+)\s*,\s*(\d+)\]/);
 
   return {
@@ -310,6 +331,14 @@ function replaceYamlSection(text, sectionName, replacement) {
   return bits.join('\n\n');
 }
 
+function normalizeHour(value, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  if (num < 0) return 0;
+  if (num > 24) return 24;
+  return num;
+}
+
 function makeSearchYamlFromForm() {
   const roleChecklist = [...document.querySelectorAll('#role-list input:checked')].map((el) => el.value.trim()).filter(Boolean);
   const customRole = $('#custom-role').value.trim();
@@ -326,8 +355,8 @@ function makeSearchYamlFromForm() {
   const exclude = $('#keywords-exclude').value.split(',').map((x) => x.trim()).filter(Boolean);
 
   const roleYaml = roles.map((role) => `    - title: "${role.replace(/"/g, '\\"')}"\n      weight: 1.0\n      aliases: ["${role.replace(/"/g, '\\"')}" ]`).join('\n');
-  const start = Number($('#active-hours-start').value || 8);
-  const end = Number($('#active-hours-end').value || 22);
+  const start = normalizeHour($('#active-hours-start').value, 8);
+  const end = normalizeHour($('#active-hours-end').value, 22);
 
   return {
     search: `search:\n  roles:\n${roleYaml}\n  keywords:\n    include: [${include.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    exclude: [${exclude.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n  experience:\n    min_years: ${Number($('#exp-min').value || 2)}\n    max_years: ${Number($('#exp-max').value || 8)}\n    current_years: ${(Number($('#exp-min').value || 2) + Number($('#exp-max').value || 8)) / 2}\n  locations:\n    preferred: [${locations.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    acceptable: []\n    blocked: []\n    work_mode: [${modes.map((x) => `"${x}"`).join(', ')}]\n    relocate: false\n  compensation:\n    currency: "INR"\n    current_ctc_lpa: ${(Number($('#salary-min').value || 10))}\n    expected_ctc_lpa: ${(Number($('#salary-min').value || 10) + 4)}\n    minimum_acceptable_lpa: ${Number($('#salary-min').value || 10)}\n    negotiable: true\n  company:\n    blocked: []\n    preferred: []\n    exclude_staffing_agencies: false\n    min_employee_rating: 3.0\n  posting:\n    max_age_days: 21\n    require_salary_disclosed: false`,
