@@ -503,10 +503,12 @@ def _validate_preferences(parsed: dict) -> str:
     """Same rules as the local config validator, minus the portal checks the
     cloud has no visibility into."""
     weights = (parsed.get("scoring") or {}).get("weights") or {}
-    if weights:
-        total = sum(float(v) for v in weights.values())
-        if abs(total - 1.0) > 0.001:
-            return f"scoring weights must sum to 1.0, got {total:.3f}"
+    if not weights:
+        return "preferences.scoring.weights is empty"
+    total = sum(float(v) for v in weights.values())
+    if abs(total - 1.0) > 0.001:
+        return f"scoring weights must sum to 1.0, got {total:.3f}"
+
     roles = (parsed.get("search") or {}).get("roles") or []
     if not roles:
         return "search.roles is empty -- nothing to search for"

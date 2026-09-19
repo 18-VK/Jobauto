@@ -325,7 +325,9 @@ function makeSearchYamlFromForm() {
 
   return {
     search: `search:\n  roles:\n${roleYaml}\n  keywords:\n    include: [${include.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    exclude: [${exclude.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n  experience:\n    min_years: ${Number($('#exp-min').value || 2)}\n    max_years: ${Number($('#exp-max').value || 8)}\n    current_years: ${(Number($('#exp-min').value || 2) + Number($('#exp-max').value || 8)) / 2}\n  locations:\n    preferred: [${locations.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    acceptable: []\n    blocked: []\n    work_mode: [${modes.map((x) => `"${x}"`).join(', ')}]\n    relocate: false\n  compensation:\n    currency: "INR"\n    current_ctc_lpa: ${(Number($('#salary-min').value || 10))}\n    expected_ctc_lpa: ${(Number($('#salary-min').value || 10) + 4)}\n    minimum_acceptable_lpa: ${Number($('#salary-min').value || 10)}\n    negotiable: true\n  company:\n    blocked: []\n    preferred: []\n    exclude_staffing_agencies: false\n    min_employee_rating: 3.0\n  posting:\n    max_age_days: 21\n    require_salary_disclosed: false`,
-    application: `application:\n  pacing:\n    active_hours: [${start}, ${end}]`
+    scoring: `scoring:\n  weights:\n    title_match: 0.30\n    skill_overlap: 0.25\n    experience_fit: 0.15\n    location_fit: 0.15\n    compensation_fit: 0.10\n    company_quality: 0.05`,
+    thresholds: `thresholds:\n  shortlist: 60\n  auto_tailor: 70\n  priority: 85`,
+    application: `application:\n  auto_submit: false\n  daily_caps:\n    naukri: 25\n    linkedin: 15\n    indeed: 20\n    instahyre: 15\n    hirist: 15\n  pacing:\n    between_actions: [1.5, 4.0]\n    between_applications: [20, 75]\n    active_hours: [${start}, ${end}]\n  cooldown_days:\n    same_job: 3650\n    same_company: 30`
   };
 }
 
@@ -350,6 +352,8 @@ $('#btn-pref-apply').onclick = () => {
   const yaml = $('#pref-yaml').value;
   const form = makeSearchYamlFromForm();
   let updated = replaceYamlSection(yaml, 'search', form.search);
+  updated = replaceYamlSection(updated, 'scoring', form.scoring);
+  updated = replaceYamlSection(updated, 'thresholds', form.thresholds);
   updated = replaceYamlSection(updated, 'application', form.application);
   $('#pref-yaml').value = updated;
   prefMsg('Quick filters applied to the YAML editor.', true);
