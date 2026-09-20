@@ -564,3 +564,59 @@ def test_empty_shortlist_says_why(config, db, monkeypatch):
     blob = " ".join(lines)
     assert "already applied" in blob
     assert "Run `discover` first" not in blob
+
+
+# ------------------------------------------------------ queued job lookup
+def test_queued_job_already_filtered_is_still_applied(config, db, monkeypatch):
+    """A job with an external/failed row is filtered out of the shortlist.
+    Queueing it by hand is an override -- and reporting it as "not in the
+    local database" sends you off to run discover for no reason."""
+    run_discover(config, db, monkeypatch)
+    row = db.shortlist(min_score=60, limit=10)[0]
+    target = row["fingerprint"]
+    db.record_application(_job_for(row), AppStatus.EXTERNAL,
+                          error="redirects to the employer site -- apply by hand")
+
+    seen: list[str] = []
+
+    class _Seen(FakeAdapter):
+        def open_application(self, job):
+            seen.append(job.fingerprint)
+            return False, "redirects to the employer site -- apply by hand"
+
+    _fake_portal(monkeypatch, _Seen)
+    lines: list[str] = []
+    Pipeline(config, db, log=lines.append).apply(limit=5, fingerprints=[target])
+
+    assert seen == [target], "the queued job was never opened"
+    assert "not in this PC's database" not in " ".join(lines)
+
+
+def test_queued_job_already_submitted_is_not_reapplied(config, db, monkeypatch):
+    run_discover(config, db, monkeypatch)
+    row = db.shortlist(min_score=60, limit=10)[0]
+    target = row["fingerprint"]
+    db.record_application(_job_for(row), AppStatus.SUBMITTED)
+
+    seen: list[str] = []
+
+    class _Seen(FakeAdapter):
+        def open_application(self, job):
+            seen.append(job.fingerprint)
+            return True, ""
+
+    _fake_portal(monkeypatch, _Seen)
+    lines: list[str] = []
+    Pipeline(config, db, log=lines.append).apply(limit=5, fingerprints=[target])
+
+    assert seen == [], "must not reapply to something already submitted"
+    assert "already submitted" in " ".join(lines)
+
+
+def test_genuinely_unknown_queued_job_says_so(config, db, monkeypatch):
+    run_discover(config, db, monkeypatch)
+    lines: list[str] = []
+    _fake_portal(monkeypatch, FakeAdapter)
+    Pipeline(config, db, log=lines.append).apply(
+        limit=5, fingerprints=["deadbeefdeadbeef"])
+    assert "not in this PC's database" in " ".join(lines)

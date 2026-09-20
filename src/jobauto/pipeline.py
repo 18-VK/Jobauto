@@ -124,18 +124,15 @@ class Pipeline:
 
         threshold = (min_score if min_score is not None
                      else float(self.config.thresholds.get("shortlist", 60)))
-        if fingerprints:
-            # An explicitly queued job is a user action, so look past the top
-            # `limit * 3` window and past the shortlist threshold -- otherwise a
-            # job the user queued from the dashboard is silently never found.
-            wanted = set(str(fp) for fp in fingerprints if fp)
-            rows = [r for r in self.db.shortlist(min_score=0, limit=1000)
-                    if r["fingerprint"] in wanted]
+        queued = bool(fingerprints)
+        if queued:
+            rows = self._queued_rows(fingerprints or [])
         else:
             rows = self.db.shortlist(min_score=threshold, limit=limit * 3)
         if not rows:
-            self.log(f"  Nothing to apply to. "
-                     f"{self._why_nothing(threshold, fingerprints)}")
+            if not queued:
+                self.log(f"  Nothing to apply to. "
+                         f"{self._why_nothing(threshold, None)}")
             return {}
 
         gate = ReviewGate(self.config, auto=self.config.auto_submit)
@@ -175,7 +172,8 @@ class Pipeline:
                 with session(portal, self.config, headless=headless) as page:
                     adapter = registry.build(portal, self.config, page)
                     stop = self._apply_on_portal(
-                        adapter, portal_rows[:budget], gate, results)
+                        adapter, portal_rows[:budget], gate, results,
+                        queued=queued)
                     done += budget
                     if stop:
                         return results
@@ -185,6 +183,35 @@ class Pipeline:
                 self.log(f"    {portal.name} unavailable: {type(exc).__name__}: {exc}")
 
         return results
+
+    def _queued_rows(self, fingerprints: list[str]) -> list[Any]:
+        """Resolve the jobs the user explicitly queued.
+
+        Deliberately looks past the shortlist threshold *and* past the
+        already-applied filter: queueing a job by hand is an override, and a
+        job that is merely filtered is a completely different problem from one
+        that was never discovered. Say which, per job, instead of blaming
+        discover for both.
+        """
+        known = {r["fingerprint"]: r for r in
+                 self.db.shortlist(min_score=0, limit=5000,
+                                   exclude_applied=False)}
+        rows: list[Any] = []
+        for fp in [str(f) for f in fingerprints if f]:
+            row = known.get(fp)
+            if row is None:
+                self.log(f"    queued job {fp[:12]} is not in this PC's "
+                         f"database -- run discover here first")
+                continue
+            status = self.db.application_status(fp)
+            title = (row["title"] or "")[:44]
+            if status in ("submitted", "prepared"):
+                self.log(f"    {title} -- already {status}, not reapplying")
+                continue
+            if status:
+                self.log(f"    {title} -- retrying after {status}")
+            rows.append(row)
+        return rows
 
     def _why_nothing(self, threshold: float,
                      fingerprints: list[str] | None) -> str:
@@ -212,13 +239,16 @@ class Pipeline:
                 ". Lower thresholds.shortlist or run discover for fresh jobs.")
 
     def _apply_on_portal(self, adapter: Any, rows: list[Any],
-                         gate: ReviewGate, results: dict[str, int]) -> bool:
+                         gate: ReviewGate, results: dict[str, int],
+                         queued: bool = False) -> bool:
         """Returns True if the caller should stop everything (you quit)."""
         cooldown = int(self.config.application.get("cooldown_days", {})
                        .get("same_job", 3650))
 
         for i, row in enumerate(rows, start=1):
-            if self.db.already_applied(row["fingerprint"], cooldown):
+            # Queued rows were already vetted one by one in _queued_rows; this
+            # guard would silently drop the retry the user just asked for.
+            if not queued and self.db.already_applied(row["fingerprint"], cooldown):
                 continue
 
             job = _job_from_row(row)

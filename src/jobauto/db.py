@@ -280,6 +280,13 @@ class Database:
             (fingerprint, *APPLIED_STATUSES, cutoff))
         return cur.fetchone() is not None
 
+    def application_status(self, fingerprint: str) -> str | None:
+        """The most recent outcome for this job, or None if never attempted."""
+        row = self._conn.execute(
+            """SELECT status FROM applications WHERE fingerprint = ?
+                ORDER BY updated_at DESC LIMIT 1""", (fingerprint,)).fetchone()
+        return row["status"] if row else None
+
     def companies_applied_since(self, days: int) -> set[str]:
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
         rows = self._conn.execute(
