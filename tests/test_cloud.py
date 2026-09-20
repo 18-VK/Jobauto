@@ -239,9 +239,34 @@ def test_unknown_task_kind_rejected(client):
 
 def test_task_queue_is_bounded(client):
     signup(client)
-    for _ in range(5):
-        assert client.post("/api/tasks", json={"kind": "discover"}).status_code == 200
-    assert client.post("/api/tasks", json={"kind": "discover"}).status_code == 409
+    seen = []
+    for i in range(5):
+        res = client.post("/api/tasks", json={"kind": "discover",
+                                              "payload": {"id": i}})
+        assert res.status_code == 200
+        seen.append(res.get_json()["task_id"])
+
+    duplicate = client.post("/api/tasks", json={"kind": "discover",
+                                                 "payload": {"id": 0}}).get_json()
+    assert duplicate["task_id"] == seen[0]
+    assert client.post("/api/tasks", json={"kind": "discover",
+                                            "payload": {"id": 99}}).status_code == 409
+
+
+def test_duplicate_pending_task_is_not_requeued(client):
+    signup(client)
+    tok = agent_token(client)
+
+    first = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    duplicate = client.post("/api/tasks", json={"kind": "discover"}).get_json()
+
+    assert duplicate["task_id"] == first
+    assert sum(1 for t in client.get("/api/tasks").get_json()["tasks"]
+               if t["status"] in ("queued", "running")) == 1
+
+    work = client.get("/api/agent/work", headers=H(tok)).get_json()
+    assert work["task"]["id"] == first
+    assert client.get("/api/agent/work", headers=H(tok)).get_json()["task"] is None
 
 
 def test_queued_job_appears_in_agent_work(client):

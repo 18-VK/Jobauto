@@ -283,14 +283,31 @@ def create_app() -> Flask:
         if kind not in ("discover", "apply", "refresh"):
             return jsonify({"error": "unknown task kind"}), 400
         with session() as s:
+            payload = body.get("payload") or {}
+            norm_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            existing = s.scalar(
+                select(Task).where(
+                    Task.user_id == g.user.id,
+                    Task.kind == kind,
+                    Task.status.in_(("queued", "running")),
+                    Task.payload_json == norm_payload,
+                )
+                .order_by(Task.created_at.desc())
+                .limit(1)
+            )
+            if existing is not None:
+                return jsonify({"ok": True, "task_id": existing.id,
+                                "already_pending": True})
+
             pending = s.scalar(
                 select(func.count(Task.id)).where(
                     Task.user_id == g.user.id,
                     Task.status.in_(("queued", "running"))))
             if pending and pending >= 5:
                 return jsonify({"error": "too many tasks already queued"}), 409
+
             task = Task(user_id=g.user.id, kind=kind,
-                        payload_json=json.dumps(body.get("payload") or {}))
+                        payload_json=norm_payload)
             s.add(task)
             s.commit()
             return jsonify({"ok": True, "task_id": task.id})
