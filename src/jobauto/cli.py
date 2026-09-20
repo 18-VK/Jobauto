@@ -18,7 +18,9 @@ Cloud mode -- a hosted dashboard you can use with this PC switched off:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from .agent.runner import CloudClient, LocalAgent
@@ -112,6 +114,80 @@ def cmd_login(args: argparse.Namespace) -> int:
         return 1
     for portal in targets:
         interactive_login(portal, cfg)
+    return 0
+
+
+def cmd_export_session(args: argparse.Namespace) -> int:
+    """Carry your signed-in sessions to the machine that will run the agent."""
+    from .browser import bundle_sessions, export_session
+    from .config import data_dir
+
+    cfg = _load()
+    targets = ([cfg.portals[p] for p in args.portal if p in cfg.portals]
+               if args.portal else cfg.enabled_portals())
+    if not targets:
+        print(f"  No matching portal. Available: {', '.join(sorted(cfg.portals))}")
+        return 1
+
+    out = Path(args.out) if args.out else data_dir() / "sessions.json"
+    states: dict[str, dict] = {}
+    for portal in targets:
+        try:
+            state = export_session(portal, cfg)
+        except Exception as exc:
+            print(f"  {portal.name}: could not read the session "
+                  f"({type(exc).__name__}: {exc})")
+            continue
+        n = len(state.get("cookies") or [])
+        states[portal.id] = state
+        print(f"  {portal.name}: {n} cookies"
+              + ("   <- looks signed out" if n == 0 else ""))
+
+    if not states:
+        print("  Nothing exported.")
+        return 1
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(bundle_sessions(states), indent=2),
+                   encoding="utf-8")
+    print(f"  Written to {out}")
+    print("  This file IS your logins. Move it over a channel you trust,")
+    print("  import it on the other machine, then delete both copies.")
+    return 0
+
+
+def cmd_import_session(args: argparse.Namespace) -> int:
+    from .browser import import_session, read_bundle
+
+    cfg = _load()
+    try:
+        portals = read_bundle(Path(args.file))
+    except RuntimeError as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 2
+
+    imported = 0
+    for pid in (args.portal or list(portals)):
+        if pid not in portals:
+            print(f"  {pid}: not in the bundle")
+            continue
+        portal = cfg.portals.get(pid)
+        if portal is None:
+            print(f"  {pid}: not configured on this machine")
+            continue
+        try:
+            n = import_session(portal, cfg, portals[pid])
+        except Exception as exc:
+            print(f"  {portal.name}: {type(exc).__name__}: {exc}")
+            continue
+        imported += 1
+        print(f"  {portal.name}: {n} cookies restored")
+
+    if not imported:
+        print("  Nothing imported.")
+        return 1
+    print("  Check it worked:  python -m jobauto doctor")
+    print("  Then delete the bundle file.")
     return 0
 
 
@@ -349,6 +425,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("login", help="one-time manual sign-in per portal")
     portal_arg(sp)
     sp.set_defaults(func=cmd_login)
+
+    sp = sub.add_parser("export-session",
+                        help="copy your portal logins to another machine")
+    portal_arg(sp)
+    sp.add_argument("--out", help="output file (default: data/sessions.json)")
+    sp.set_defaults(func=cmd_export_session)
+
+    sp = sub.add_parser("import-session",
+                        help="restore portal logins exported elsewhere")
+    portal_arg(sp)
+    sp.add_argument("--file", required=True, help="the exported bundle")
+    sp.set_defaults(func=cmd_import_session)
 
     sp = sub.add_parser("discover", help="search and score, applies to nothing")
     portal_arg(sp)

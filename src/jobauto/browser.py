@@ -14,6 +14,8 @@ import contextlib
 import json
 import os
 import subprocess
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -178,11 +180,35 @@ def session(portal: PortalConfig, config: Config,
         s.stop()
 
 
-def interactive_login(portal: PortalConfig, config: Config) -> bool:
+def wait_for_login(page: Any, marker: str, minutes: float,
+                   on_tick: Any = None) -> bool:
+    """Poll for the signed-in marker instead of one long blocking wait.
+
+    A single wait_for() cannot tell "still typing an OTP" from "this
+    selector is stale", and whichever it was, the window got closed the
+    moment it expired -- usually mid-login. Polling lets us notice success
+    early, keep the window alive, and report progress while you work.
+    """
+    deadline = time.monotonic() + minutes * 60
+    while time.monotonic() < deadline:
+        try:
+            if page.locator(marker).first.is_visible(timeout=1500):
+                return True
+        except Exception:
+            pass
+        if on_tick:
+            on_tick(max(0, deadline - time.monotonic()))
+        time.sleep(2)
+    return False
+
+
+def interactive_login(portal: PortalConfig, config: Config,
+                      minutes: float = 10.0) -> bool:
     """Open the login page and wait for you to sign in by hand.
 
-    Returns True once the portal's logged-in marker appears. The cookies then
-    persist in the profile dir, so this is a once-per-portal chore.
+    The cookies persist in the profile dir as you go, so what matters most
+    is that this window stays open until you are actually done -- not that
+    we manage to recognise the logged-in marker.
     """
     login_url = portal.auth.get("login_url") or portal.base_url
     marker = portal.auth.get("logged_in_selector")
@@ -192,27 +218,22 @@ def interactive_login(portal: PortalConfig, config: Config) -> bool:
     try:
         page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
         print(f"\n  A browser window is open on {portal.name}.")
-        print("  Sign in there (including any OTP or MFA step).")
-        print("  Waiting up to 2 minutes, then I will ask.\n")
+        print("  Sign in there, including any OTP or MFA step.")
+        print(f"  I will watch for up to {minutes:g} minutes, then ask."
+              f"  Take as long as you need -- the window stays open.\n")
 
-        if not marker:
-            input("  Press Enter here once you are signed in... ")
-            return True
-
-        try:
-            page.locator(marker).first.wait_for(timeout=120000)
+        if marker and wait_for_login(page, marker, minutes):
             print(f"  Signed in to {portal.name}. Session saved to "
                   f"{s.profile_dir}\n")
             return True
-        except Exception:
-            pass
 
-        # A missing marker does not mean the login failed -- these
-        # selectors go stale constantly, and refusing to keep a session
-        # you can plainly see in the window is no help to anyone. Ask.
-        print(f"  Could not confirm sign-in to {portal.name} automatically.")
-        print(f"  (auth.logged_in_selector in config/portals/{portal.id}"
-              f".yaml is probably stale: {marker})")
+        # Not finding the marker does not mean the login failed. These
+        # selectors go stale constantly, and closing a window you can
+        # plainly see is signed in helps nobody.
+        if marker:
+            print(f"  Could not confirm sign-in automatically.")
+            print(f"  (auth.logged_in_selector in config/portals/"
+                  f"{portal.id}.yaml may be stale: {marker})")
         try:
             reply = input("  Are you signed in in that window? [y/N] ")
         except EOFError:
@@ -220,7 +241,69 @@ def interactive_login(portal: PortalConfig, config: Config) -> bool:
         if reply.strip().lower() in ("y", "yes"):
             print(f"  Session saved to {s.profile_dir}\n")
             return True
-        print("  Nothing saved.\n")
+        print("  Nothing confirmed. The session is kept either way; "
+              "re-run this if you need another go.\n")
         return False
     finally:
         s.stop()
+
+
+# ------------------------------------------------------------- portability
+# Moving the agent to an always-on machine needs the portal sessions to come
+# with it, and that machine usually has no screen to log in on. These carry the
+# cookies across. The file they produce IS the login -- anyone holding it is
+# signed in as you -- so it lands under data/ (gitignored) and the CLI tells
+# you to delete it once it has been imported.
+SESSION_BUNDLE_VERSION = 1
+
+
+def bundle_sessions(states: dict[str, dict]) -> dict:
+    """Wrap per-portal storage states in a versioned envelope."""
+    return {
+        "version": SESSION_BUNDLE_VERSION,
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "portals": states,
+    }
+
+
+def read_bundle(path: Path) -> dict[str, dict]:
+    """Unwrap a bundle, failing loudly rather than importing half a session."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not read {path}: {exc}") from exc
+    if not isinstance(data, dict) or "portals" not in data:
+        raise RuntimeError(f"{path} is not a jobauto session bundle.")
+    if data.get("version") != SESSION_BUNDLE_VERSION:
+        raise RuntimeError(
+            f"{path} is a version {data.get('version')} bundle; this build "
+            f"writes version {SESSION_BUNDLE_VERSION}.")
+    portals = data["portals"]
+    if not isinstance(portals, dict):
+        raise RuntimeError(f"{path} has no per-portal sessions in it.")
+    return portals
+
+
+def export_session(portal: PortalConfig, config: Config) -> dict:
+    """Read the cookies out of this portal profile directory."""
+    s = BrowserSession(portal, config, headless=True)
+    s.start()
+    try:
+        state = s._ctx.storage_state()
+    finally:
+        s.stop()
+    return {"cookies": state.get("cookies", [])}
+
+
+def import_session(portal: PortalConfig, config: Config, state: dict) -> int:
+    """Write cookies into this portal profile directory. Returns the count."""
+    cookies = state.get("cookies") or []
+    if not cookies:
+        return 0
+    s = BrowserSession(portal, config, headless=True)
+    s.start()
+    try:
+        s._ctx.add_cookies(cookies)
+    finally:
+        s.stop()
+    return len(cookies)

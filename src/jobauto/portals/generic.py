@@ -25,13 +25,40 @@ class ConfigDrivenAdapter(PortalAdapter):
     def __init__(self, portal: Any, config: Any, page: Any) -> None:
         super().__init__(portal, config, page)
         # Breadcrumbs for why_no_results(). A portal that silently yields
-        # nothing is the single most common failure here, and every step of
-        # the scrape swallows its own errors so one bad card cannot kill a
-        # page -- which leaves no trace of what actually went wrong.
+        # nothing is the most common failure here, and every step of the
+        # scrape swallows its own errors so one bad card cannot kill a page --
+        # which leaves no trace of what actually went wrong.
         self.last_url = ""
+        self.landed_url = ""
+        self.landed_title = ""
         self.last_card_count = -1
-        self.last_container_seen: bool | None = None
+        self.last_container_seen = None
         self.last_skipped = 0
+        self.last_error = ""
+
+    def note_landing(self) -> None:
+        """Where we actually ended up, which is not always where we asked to
+        go. A redirect to a login or consent page is the single most common
+        reason a selector "goes stale", and it is invisible otherwise."""
+        try:
+            self.landed_url = str(getattr(self.page, "url", "") or "")
+        except Exception:
+            self.landed_url = ""
+        try:
+            self.landed_title = (self.page.title() or "")[:120]
+        except Exception:
+            self.landed_title = ""
+
+    def _landed(self) -> str:
+        if self.landed_url and self.landed_url != self.last_url:
+            where = f" -- the site sent us to {self.landed_url}"
+        elif self.landed_url:
+            where = f" at {self.landed_url}"
+        else:
+            where = ""
+        if self.landed_title:
+            where += f' (page title: "{self.landed_title}")'
+        return where
 
     def why_no_results(self) -> str:
         """Name the step that failed, in the order they happen."""
@@ -41,17 +68,23 @@ class ConfigDrivenAdapter(PortalAdapter):
         if not self.portal.search.get("result_card"):
             return f"no search.result_card set in {where}"
         if not self.last_url:
-            return "the search page never loaded -- check the url_template"
+            return (f"the search page never loaded"
+                    + (f" ({self.last_error})" if self.last_error else "")
+                    + " -- check the url_template")
         if self.last_card_count < 0:
-            return f"could not read the results page at {self.last_url}"
+            return (f"could not read the results page{self._landed()}"
+                    + (f": {self.last_error}" if self.last_error else "")
+                    + ". A redirect mid-scrape usually means the URL is wrong "
+                      "or you are signed out")
         if self.last_card_count == 0:
             if self.last_container_seen is False:
-                return (f"nothing on the page matched search.results_container "
-                        f"or search.result_card ({where}). Either both "
-                        f"selectors are stale or you are not signed in -- try: "
-                        f"python -m jobauto login --portal {self.id}")
+                return (f"nothing matched search.results_container or "
+                        f"search.result_card ({where}){self._landed()}. "
+                        f"Either both selectors are stale or you are not "
+                        f"signed in -- try: python -m jobauto login "
+                        f"--portal {self.id}")
             return (f"the page loaded but search.result_card matched 0 cards "
-                    f"({where}) -- that selector is stale")
+                    f"({where}){self._landed()} -- that selector is stale")
         return (f"{self.last_card_count} cards matched but {self.last_skipped} "
                 f"were skipped for having no title or url -- "
                 f"search.fields.title / search.fields.url in {where} are stale")
@@ -111,8 +144,10 @@ class ConfigDrivenAdapter(PortalAdapter):
             try:
                 self.page.goto(url, wait_until="domcontentloaded", timeout=40000)
                 self.last_url = url
-            except Exception:
+            except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"[:160]
                 continue
+            self.note_landing()
             self.pace()
 
             for page_num in range(max_pages):
@@ -147,7 +182,9 @@ class ConfigDrivenAdapter(PortalAdapter):
             cards = self.page.locator(card_sel)
             count = cards.count()
             self.last_card_count = count
-        except Exception:
+        except Exception as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"[:160]
+            self.note_landing()
             return
 
         fields = self.portal.search.get("fields", {})

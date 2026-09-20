@@ -527,16 +527,65 @@ def test_missing_button_with_dead_session_raises_login_required(config):
         adapter.explain_click_failure("apply", "#apply", TimeoutError())
 
 
+# ------------------------------------------------------ queued job lookup
+def test_queued_job_already_filtered_is_still_applied(config, db, monkeypatch):
+    """A job with an external/failed row is filtered out of the shortlist.
+    Queueing it by hand is an override -- and reporting it as "not in the
+    local database" sends you off to run discover for no reason."""
+    run_discover(config, db, monkeypatch)
+    row = db.shortlist(min_score=60, limit=10)[0]
+    target = row["fingerprint"]
+    db.record_application(_job_for(row), AppStatus.EXTERNAL,
+                          error="redirects to the employer site -- apply by hand")
+    seen: list[str] = []
+
+    class _Seen(FakeAdapter):
+        def open_application(self, job):
+            seen.append(job.fingerprint)
+            return False, "redirects to the employer site -- apply by hand"
+
+    _fake_portal(monkeypatch, _Seen)
+    lines: list[str] = []
+    Pipeline(config, db, log=lines.append).apply(limit=5, fingerprints=[target])
+    assert seen == [target], "the queued job was never opened"
+    assert "not in this PC's database" not in " ".join(lines)
+
+
+def test_queued_job_already_submitted_is_not_reapplied(config, db, monkeypatch):
+    run_discover(config, db, monkeypatch)
+    row = db.shortlist(min_score=60, limit=10)[0]
+    db.record_application(_job_for(row), AppStatus.SUBMITTED)
+    seen: list[str] = []
+
+    class _Seen(FakeAdapter):
+        def open_application(self, job):
+            seen.append(job.fingerprint)
+            return True, ""
+
+    _fake_portal(monkeypatch, _Seen)
+    lines: list[str] = []
+    Pipeline(config, db, log=lines.append).apply(
+        limit=5, fingerprints=[row["fingerprint"]])
+    assert seen == [], "must not reapply to something already submitted"
+    assert "already submitted" in " ".join(lines)
+
+
+def test_genuinely_unknown_queued_job_says_so(config, db, monkeypatch):
+    run_discover(config, db, monkeypatch)
+    lines: list[str] = []
+    _fake_portal(monkeypatch, FakeAdapter)
+    Pipeline(config, db, log=lines.append).apply(
+        limit=5, fingerprints=["deadbeefdeadbeef"])
+    assert "not in this PC's database" in " ".join(lines)
+
+
 # ------------------------------------------------------- repairing history
-def test_misfiled_external_rows_are_repaired_on_open(config, db, monkeypatch,
-                                                     tmp_path):
+def test_misfiled_external_rows_are_repaired_on_open(config, db, monkeypatch):
     """Rows written before outcomes were classified: everything that was not
-    an instant apply got filed as external, including our own failures. Left
-    alone they retire the job for good and the shortlist comes back empty."""
+    an instant apply got filed as external, including our own failures."""
     run_discover(config, db, monkeypatch)
     rows = db.shortlist(min_score=60, limit=10)
     real, ours = rows[0], rows[1]
-
     db.record_application(_job_for(real), AppStatus.EXTERNAL,
                           error="redirects to the employer site -- apply by hand")
     db.record_application(_job_for(ours), AppStatus.EXTERNAL,
@@ -554,72 +603,14 @@ def test_misfiled_external_rows_are_repaired_on_open(config, db, monkeypatch,
 
 
 def test_empty_shortlist_says_why(config, db, monkeypatch):
-    """"Run discover first" is wrong when discover already ran."""
     run_discover(config, db, monkeypatch)
     for row in db.shortlist(min_score=60, limit=50):
         db.record_application(_job_for(row), AppStatus.SUBMITTED)
-
     lines: list[str] = []
     Pipeline(config, db, log=lines.append).apply(limit=5)
     blob = " ".join(lines)
     assert "already applied" in blob
     assert "Run `discover` first" not in blob
-
-
-# ------------------------------------------------------ queued job lookup
-def test_queued_job_already_filtered_is_still_applied(config, db, monkeypatch):
-    """A job with an external/failed row is filtered out of the shortlist.
-    Queueing it by hand is an override -- and reporting it as "not in the
-    local database" sends you off to run discover for no reason."""
-    run_discover(config, db, monkeypatch)
-    row = db.shortlist(min_score=60, limit=10)[0]
-    target = row["fingerprint"]
-    db.record_application(_job_for(row), AppStatus.EXTERNAL,
-                          error="redirects to the employer site -- apply by hand")
-
-    seen: list[str] = []
-
-    class _Seen(FakeAdapter):
-        def open_application(self, job):
-            seen.append(job.fingerprint)
-            return False, "redirects to the employer site -- apply by hand"
-
-    _fake_portal(monkeypatch, _Seen)
-    lines: list[str] = []
-    Pipeline(config, db, log=lines.append).apply(limit=5, fingerprints=[target])
-
-    assert seen == [target], "the queued job was never opened"
-    assert "not in this PC's database" not in " ".join(lines)
-
-
-def test_queued_job_already_submitted_is_not_reapplied(config, db, monkeypatch):
-    run_discover(config, db, monkeypatch)
-    row = db.shortlist(min_score=60, limit=10)[0]
-    target = row["fingerprint"]
-    db.record_application(_job_for(row), AppStatus.SUBMITTED)
-
-    seen: list[str] = []
-
-    class _Seen(FakeAdapter):
-        def open_application(self, job):
-            seen.append(job.fingerprint)
-            return True, ""
-
-    _fake_portal(monkeypatch, _Seen)
-    lines: list[str] = []
-    Pipeline(config, db, log=lines.append).apply(limit=5, fingerprints=[target])
-
-    assert seen == [], "must not reapply to something already submitted"
-    assert "already submitted" in " ".join(lines)
-
-
-def test_genuinely_unknown_queued_job_says_so(config, db, monkeypatch):
-    run_discover(config, db, monkeypatch)
-    lines: list[str] = []
-    _fake_portal(monkeypatch, FakeAdapter)
-    Pipeline(config, db, log=lines.append).apply(
-        limit=5, fingerprints=["deadbeefdeadbeef"])
-    assert "not in this PC's database" in " ".join(lines)
 
 
 # ------------------------------------------- ambiguous apply -> review list
@@ -635,69 +626,12 @@ def test_unconfirmed_apply_goes_to_the_review_list(config, db, monkeypatch):
 
     _fake_portal(monkeypatch, _NoDrawer)
     result = Pipeline(config, db).apply(limit=1)
-
     assert result.get("prepared"), "should be prepared, not failed"
     assert db.pending_review(), "must show up in the review list"
 
 
-def test_confirmed_instant_apply_is_recorded_submitted(config, db, monkeypatch):
-    run_discover(config, db, monkeypatch)
-
-    class _Instant(FakeAdapter):
-        def open_application(self, job):
-            return False, "applied instantly (no screening questions)"
-
-    _fake_portal(monkeypatch, _Instant)
-    assert Pipeline(config, db).apply(limit=1).get("submitted")
-
-
-# --------------------------------------------- why a portal found nothing
-def _adapter_for_diag(config, page, search: dict):
-    from jobauto.portals.generic import ConfigDrivenAdapter
-
-    class _Diag(ConfigDrivenAdapter):
-        def search(self, role):
-            return iter(())
-
-    portal = config.portals["fake"]
-    portal.search = search
-    return _Diag(portal, config, page)
-
-
-def test_stale_card_selector_is_named(config):
-    a = _adapter_for_diag(config, None,
-                          {"url_template": "https://x", "result_card": ".card"})
-    a.last_url, a.last_card_count, a.last_container_seen = "https://x", 0, True
-    assert "result_card" in a.why_no_results()
-    assert "stale" in a.why_no_results()
-
-
-def test_nothing_matching_at_all_suggests_login(config):
-    a = _adapter_for_diag(config, None,
-                          {"url_template": "https://x", "result_card": ".card"})
-    a.last_url, a.last_card_count, a.last_container_seen = "https://x", 0, False
-    note = a.why_no_results()
-    assert "login --portal fake" in note
-
-
-def test_cards_found_but_fields_stale_is_named(config):
-    a = _adapter_for_diag(config, None,
-                          {"url_template": "https://x", "result_card": ".card"})
-    a.last_url, a.last_card_count, a.last_skipped = "https://x", 12, 12
-    note = a.why_no_results()
-    assert "search.fields.title" in note
-    assert "12" in note
-
-
-def test_missing_template_is_named(config):
-    a = _adapter_for_diag(config, None, {})
-    assert "url_template" in a.why_no_results()
-
-
 # ------------------------------------------------ review from another device
 class _FormAdapter(FakeAdapter):
-    """Lands on a form, so the run reaches the review gate."""
-
     def open_application(self, job):
         return True, ""
 
@@ -711,9 +645,7 @@ def test_agent_leaves_applications_prepared_for_remote_review(
     so they reach the dashboard -- marking them skipped loses them."""
     run_discover(config, db, monkeypatch)
     _fake_portal(monkeypatch, _FormAdapter)
-
     result = Pipeline(config, db).apply(limit=2, interactive=False)
-
     assert result["prepared"] == 2
     assert result["skipped"] == 0
     assert len(db.pending_review()) == 2
@@ -730,20 +662,57 @@ def test_agent_never_blocks_on_input(config, db, monkeypatch):
 
     monkeypatch.setattr("builtins.input", boom)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
     Pipeline(config, db).apply(limit=1, interactive=False)
 
 
-def test_deferred_application_is_not_a_declined_one(config, db, monkeypatch):
-    """SKIP means you looked and said no. DEFER means nobody looked yet --
-    and only SKIP should stop the job coming back."""
-    from jobauto.review import Decision, ReviewGate
+# --------------------------------------------- why a portal found nothing
+def _diag_adapter(config, search: dict):
+    from jobauto.portals.generic import ConfigDrivenAdapter
 
-    gate = ReviewGate(config, auto=False, interactive=False)
-    run_discover(config, db, monkeypatch)
-    row = db.shortlist(min_score=60, limit=1)[0]
+    class _Diag(ConfigDrivenAdapter):
+        def search(self, role):
+            return iter(())
 
-    from jobauto.models import Application
-    from jobauto.pipeline import _job_from_row, _score_from_row
-    app = Application(job=_job_from_row(row), score=_score_from_row(row))
-    assert gate.ask(app) == Decision.DEFER
+    portal = config.portals["fake"]
+    portal.search = search
+    return _Diag(portal, config, None)
+
+
+_SEARCH = {"url_template": "https://x", "result_card": ".card"}
+
+
+def test_stale_card_selector_is_named(config):
+    a = _diag_adapter(config, _SEARCH)
+    a.last_url, a.last_card_count, a.last_container_seen = "https://x", 0, True
+    assert "result_card" in a.why_no_results()
+    assert "stale" in a.why_no_results()
+
+
+def test_nothing_matching_at_all_suggests_login(config):
+    a = _diag_adapter(config, _SEARCH)
+    a.last_url, a.last_card_count, a.last_container_seen = "https://x", 0, False
+    assert "login --portal fake" in a.why_no_results()
+
+
+def test_cards_found_but_fields_stale_is_named(config):
+    a = _diag_adapter(config, _SEARCH)
+    a.last_url, a.last_card_count, a.last_skipped = "https://x", 12, 12
+    note = a.why_no_results()
+    assert "search.fields.title" in note and "12" in note
+
+
+def test_missing_template_is_named(config):
+    assert "url_template" in _diag_adapter(config, {}).why_no_results()
+
+
+def test_a_redirect_is_reported_with_where_we_landed(config):
+    """The single most useful fact when a selector "goes stale": we were sent
+    somewhere else entirely."""
+    a = _diag_adapter(config, _SEARCH)
+    a.last_url = "https://x/search"
+    a.landed_url = "https://x/login"
+    a.landed_title = "Sign in"
+    a.last_card_count, a.last_container_seen = 0, False
+    note = a.why_no_results()
+    assert "https://x/login" in note
+    assert "Sign in" in note

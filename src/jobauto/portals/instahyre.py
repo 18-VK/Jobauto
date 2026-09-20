@@ -26,8 +26,13 @@ class InstahyreAdapter(ConfigDrivenAdapter):
         url = self.portal.search.get("url_template", "")
         try:
             self.page.goto(url, wait_until="domcontentloaded", timeout=40000)
-        except Exception:
+            self.last_url = url
+        except Exception as exc:
+            # Without these the shared diagnostic reports "the search page
+            # never loaded" for a feed that loaded perfectly well.
+            self.last_error = f"{type(exc).__name__}: {exc}"[:160]
             return
+        self.note_landing()
         self.pace()
 
         max_pages = int(self.portal.search.get("pagination", {}).get("max_pages", 1))

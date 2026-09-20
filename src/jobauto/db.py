@@ -133,9 +133,9 @@ class Database:
 
         Everything that was not an instant apply used to be filed as
         `external`, including our own failures to drive the page -- a stale
-        selector, a modal that never opened. Now that `external` is terminal,
-        those rows would retire the job for good and leave an empty shortlist.
-        A genuine redirect always says "apply by hand"; nothing else did.
+        selector, a modal that never opened. Now that `external` is terminal
+        those rows retire the job for good and leave an empty shortlist. A
+        genuine redirect always says "apply by hand"; nothing else did.
         """
         stale = (datetime.now()
                  - timedelta(hours=RETRY_FAILED_AFTER_HOURS + 1)

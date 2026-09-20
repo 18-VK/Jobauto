@@ -140,8 +140,7 @@ class Pipeline:
             rows = self.db.shortlist(min_score=threshold, limit=limit * 3)
         if not rows:
             if not queued:
-                self.log(f"  Nothing to apply to. "
-                         f"{self._why_nothing(threshold, None)}")
+                self.log(f"  Nothing to apply to. {self._why_nothing(threshold)}")
             return {}
 
         gate = ReviewGate(self.config, auto=self.config.auto_submit,
@@ -195,7 +194,7 @@ class Pipeline:
         return results
 
     def _queued_rows(self, fingerprints: list[str]) -> list[Any]:
-        """Resolve the jobs the user explicitly queued.
+        """Resolve the jobs you explicitly queued.
 
         Deliberately looks past the shortlist threshold *and* past the
         already-applied filter: queueing a job by hand is an override, and a
@@ -223,14 +222,9 @@ class Pipeline:
             rows.append(row)
         return rows
 
-    def _why_nothing(self, threshold: float,
-                     fingerprints: list[str] | None) -> str:
-        """"Run discover first" is only right when there is nothing scored.
+    def _why_nothing(self, threshold: float) -> str:
+        """"Run discover first" is only right when nothing is scored yet.
         Every other cause needs a different action, so name it."""
-        if fingerprints:
-            return (f"none of the {len(fingerprints)} queued job(s) are in the "
-                    f"local database -- run discover on this PC first")
-
         b = self.db.shortlist_breakdown(threshold)
         if not b["scored"]:
             return "nothing scored yet. Run `discover` first."
@@ -256,8 +250,8 @@ class Pipeline:
                        .get("same_job", 3650))
 
         for i, row in enumerate(rows, start=1):
-            # Queued rows were already vetted one by one in _queued_rows; this
-            # guard would silently drop the retry the user just asked for.
+            # Queued rows were vetted one by one in _queued_rows; this
+            # guard would silently drop the retry you just asked for.
             if not queued and self.db.already_applied(row["fingerprint"], cooldown):
                 continue
 
@@ -334,8 +328,8 @@ class Pipeline:
                          "resume with: python -m jobauto review")
                 return True
             if decision == Decision.DEFER:
-                # Stays PREPARED so it shows up in the review list -- on the
-                # dashboard, on your phone, or in `jobauto review`.
+                # Stays PREPARED so it shows in the review list -- dashboard,
+                # phone, or `jobauto review`.
                 continue
             if decision == Decision.SKIP:
                 self.db.set_status(app_id, AppStatus.SKIPPED)
@@ -387,9 +381,9 @@ class Pipeline:
 # the dashboard and marks the job done so a fixed selector never gets to retry.
 _APPLIED_MARKERS = ("applied instantly",)
 _EXTERNAL_MARKERS = ("apply by hand",)
-# We got far enough that the application may well be half-made. Retrying would
-# risk a duplicate and dropping it would lose it, so it goes to the review list
-# for you to finish or discard -- which is what the review gate is for.
+# We got far enough that the application may well be half-made. Retrying risks
+# a duplicate and dropping it loses it, so it goes to the review list for you
+# to finish or discard -- which is what the review gate is for.
 _NEEDS_REVIEW_MARKERS = ("needs a look",)
 
 

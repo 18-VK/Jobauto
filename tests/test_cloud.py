@@ -496,7 +496,7 @@ def test_postgres_path_uses_an_advisory_lock():
 
 
 # ----------------------------------------------------------- stuck tasks
-def test_a_task_the_agent_died_on_stops_blocking_new_ones(client, monkeypatch):
+def test_a_task_the_agent_died_on_stops_blocking_new_ones(client):
     """A claimed task with no result blocks every later task of the same shape
     behind the already-pending check, so the button quietly stops working."""
     from datetime import timedelta
@@ -506,13 +506,11 @@ def test_a_task_the_agent_died_on_stops_blocking_new_ones(client, monkeypatch):
 
     signup(client)
     token = agent_token(client)
-
     assert client.post("/api/tasks", json={"kind": "discover", "payload": {}}
                        ).get_json()["ok"]
-    claimed = client.get("/api/agent/work", headers=H(token)).get_json()
-    task_id = claimed["task"]["id"]
+    task_id = client.get("/api/agent/work",
+                         headers=H(token)).get_json()["task"]["id"]
 
-    # Same shape is refused while that one is still running.
     again = client.post("/api/tasks", json={"kind": "discover", "payload": {}})
     assert again.get_json().get("already_pending")
 
@@ -532,10 +530,9 @@ def test_a_running_task_is_not_reaped_too_early(client):
     signup(client)
     token = agent_token(client)
     client.post("/api/tasks", json={"kind": "discover", "payload": {}})
-    task_id = client.get("/api/agent/work", headers=H(token)).get_json()["task"]["id"]
-
+    task_id = client.get("/api/agent/work",
+                         headers=H(token)).get_json()["task"]["id"]
     client.get("/api/agent/work", headers=H(token))
-
     statuses = {t["id"]: t["status"]
                 for t in client.get("/api/tasks").get_json()["tasks"]}
     assert statuses[task_id] == "running"
