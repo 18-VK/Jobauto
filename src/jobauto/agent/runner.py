@@ -224,9 +224,11 @@ class LocalAgent:
         lines: list[str] = []
         pipe = Pipeline(config, db, log=lambda l: (lines.append(str(l)),
                                                    self.log(f"    {l}")))
+        # Bound before the try: the finally below reads it, and an exception in
+        # the comprehension would otherwise mask the real error.
+        fps = [str(item.get("fingerprint", "")) for item in fingerprints
+               if isinstance(item, dict) and item.get("fingerprint")]
         try:
-            fps = [str(item.get("fingerprint", "")) for item in fingerprints]
-            fps = [fp for fp in fps if fp]
             pipe.apply(limit=len(fps), headless=self.headless, fingerprints=fps)
             self.push_state(db, config)
         finally:
@@ -242,15 +244,36 @@ class LocalAgent:
         if not task and not queued:
             return
 
-        queued_fps = [str(item.get("fingerprint", "")) for item in queued if item.get("fingerprint")]
-        if task and task.get("kind") == "apply" and queued_fps:
-            # Queue items are already being processed by the scheduled apply task;
-            # consuming them here prevents the next poll from reopening the same
-            # portal for the same job set.
-            self.cloud.clear_queued_jobs(queued_fps)
+        queued_fps = [str(item.get("fingerprint", "")) for item in queued
+                      if item.get("fingerprint")]
 
-        config = load_config()
-        db = Database()
+        # An apply task and the queue are one request: the dashboard's Apply
+        # button sends no fingerprints, so without this the queued jobs get
+        # consumed while the run applies to unrelated shortlisted jobs.
+        apply_task = bool(task) and task.get("kind") == "apply"
+        if apply_task and queued_fps:
+            payload = dict(task.get("payload") or {})
+            if not payload.get("fingerprints"):
+                payload["fingerprints"] = queued_fps
+                payload.setdefault("limit", len(queued_fps))
+                task["payload"] = payload
+
+        try:
+            config = load_config()
+            db = Database()
+        except Exception as exc:
+            # The task was claimed by /work before we got here. Bailing out
+            # silently leaves it `running` forever, which then blocks every
+            # later task of the same shape behind the already-pending check.
+            if task:
+                self.log(f"  task {task['id']} could not start: {exc}")
+                try:
+                    self.cloud.task_result(task["id"], "failed",
+                                           {"error": str(exc)}, str(exc))
+                except AgentError as report_exc:
+                    self.log(f"  could not report the failure: {report_exc}")
+            raise
+
         try:
             if task:
                 self.log(f"  picked up task {task['id']}: {task['kind']}")
@@ -259,6 +282,13 @@ class LocalAgent:
                 self.apply_queued(queued, db, config)
         finally:
             db.close()
+            # Only once the work has actually been attempted. Clearing before
+            # the run marks jobs done that were never opened.
+            if apply_task and queued_fps:
+                try:
+                    self.cloud.clear_queued_jobs(queued_fps)
+                except AgentError as exc:
+                    self.log(f"  could not clear the queue: {exc}")
 
     def run_forever(self) -> None:
         info = self.cloud.hello("starting")

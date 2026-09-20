@@ -124,10 +124,15 @@ class Pipeline:
 
         threshold = (min_score if min_score is not None
                      else float(self.config.thresholds.get("shortlist", 60)))
-        rows = self.db.shortlist(min_score=threshold, limit=limit * 3)
         if fingerprints:
+            # An explicitly queued job is a user action, so look past the top
+            # `limit * 3` window and past the shortlist threshold -- otherwise a
+            # job the user queued from the dashboard is silently never found.
             wanted = set(str(fp) for fp in fingerprints if fp)
-            rows = [r for r in rows if r["fingerprint"] in wanted]
+            rows = [r for r in self.db.shortlist(min_score=0, limit=1000)
+                    if r["fingerprint"] in wanted]
+        else:
+            rows = self.db.shortlist(min_score=threshold, limit=limit * 3)
         if not rows:
             self.log("  Nothing shortlisted. Run `discover` first.")
             return {}
@@ -208,6 +213,12 @@ class Pipeline:
             except ChallengeDetected as exc:
                 self.log(f"    {exc}")
                 return False
+            except LoginRequired as exc:
+                # Every remaining job on this portal would fail the same way,
+                # and hammering a logged-out session is exactly what looks
+                # like a bot. Stop the portal and say what to run.
+                self.log(f"    {exc}")
+                return False
             except Exception as exc:
                 self.db.record_application(job, AppStatus.FAILED,
                                            error=f"{type(exc).__name__}: {exc}")
@@ -215,10 +226,10 @@ class Pipeline:
                 continue
 
             if not on_form:
-                status = (AppStatus.SUBMITTED if "applied instantly" in note
-                          else AppStatus.EXTERNAL)
+                status = _classify(note)
                 self.db.record_application(job, status, error=note)
-                key = "submitted" if status is AppStatus.SUBMITTED else "external"
+                key = {AppStatus.SUBMITTED: "submitted",
+                       AppStatus.EXTERNAL: "external"}.get(status, "failed")
                 results[key] += 1
                 self.log(f"    {job.title[:40]:<40} {note}")
                 continue
@@ -297,6 +308,24 @@ class Pipeline:
 
 
 # ----------------------------------------------------------------- helpers
+# Adapters report an outcome as free text. Only two of those outcomes mean the
+# job is finished with: it went through, or it genuinely lives on an employer
+# site. Everything else is our failure to drive the page -- a stale selector,
+# a modal that never opened -- and recording those as "external" both lies in
+# the dashboard and marks the job done so a fixed selector never gets to retry.
+_APPLIED_MARKERS = ("applied instantly",)
+_EXTERNAL_MARKERS = ("apply by hand",)
+
+
+def _classify(note: str) -> AppStatus:
+    text = (note or "").lower()
+    if any(m in text for m in _APPLIED_MARKERS):
+        return AppStatus.SUBMITTED
+    if any(m in text for m in _EXTERNAL_MARKERS):
+        return AppStatus.EXTERNAL
+    return AppStatus.FAILED
+
+
 def _job_from_row(row: Any) -> Job:
     from .models import ExperienceRange, SalaryRange, WorkMode
     import json

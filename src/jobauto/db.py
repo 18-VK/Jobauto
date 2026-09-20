@@ -17,6 +17,22 @@ from typing import Any, Iterator
 from .config import data_dir
 from .models import AppStatus, Job, ScoreBreakdown
 
+# A job that reached any of these is finished with and must never be reopened:
+# it went through, it is waiting on you, you declined it, or it genuinely lives
+# on an employer site. Leaving `external` out of this list is what put the same
+# job back in the shortlist on every single run.
+TERMINAL_STATUSES = ("submitted", "prepared", "skipped", "external")
+
+# Narrower: "there is already an application on this job". `skipped` is absent
+# on purpose -- you declined it, so it is allowed back after the cooldown.
+APPLIED_STATUSES = ("submitted", "prepared", "external")
+
+# `failed` is deliberately NOT terminal. A failure is usually ours -- a stale
+# selector, an expired session -- and making it permanent would mean a portal
+# redesign silently deletes every job from the shortlist for good. Retry, but
+# once a day rather than on every run.
+RETRY_FAILED_AFTER_HOURS = 24
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     fingerprint     TEXT PRIMARY KEY,
@@ -182,12 +198,22 @@ class Database:
             FROM jobs j JOIN scores s ON s.fingerprint = j.fingerprint
             WHERE s.dropped = 0 AND s.total >= ?
         """
+        params: list[Any] = [min_score]
         if exclude_applied:
-            sql += """ AND j.fingerprint NOT IN (
+            marks = ",".join("?" for _ in TERMINAL_STATUSES)
+            retry_cutoff = (datetime.now()
+                            - timedelta(hours=RETRY_FAILED_AFTER_HOURS)).isoformat()
+            sql += f""" AND j.fingerprint NOT IN (
                          SELECT fingerprint FROM applications
-                         WHERE status IN ('submitted','prepared','skipped'))"""
+                         WHERE status IN ({marks}))
+                    AND j.fingerprint NOT IN (
+                         SELECT fingerprint FROM applications
+                         WHERE status = 'failed' AND updated_at >= ?)"""
+            params.extend(TERMINAL_STATUSES)
+            params.append(retry_cutoff)
         sql += " ORDER BY s.total DESC LIMIT ?"
-        return self._conn.execute(sql, (min_score, limit)).fetchall()
+        params.append(limit)
+        return self._conn.execute(sql, params).fetchall()
 
     # --------------------------------------------------- applications
     def record_application(self, job: Job, status: AppStatus, *,
@@ -225,11 +251,12 @@ class Database:
 
     def already_applied(self, fingerprint: str, cooldown_days: int = 3650) -> bool:
         cutoff = (datetime.now() - timedelta(days=cooldown_days)).isoformat()
+        marks = ",".join("?" for _ in APPLIED_STATUSES)
         cur = self._conn.execute(
-            """SELECT 1 FROM applications
-                WHERE fingerprint = ? AND status IN ('submitted','prepared')
-                  AND updated_at >= ?""",
-            (fingerprint, cutoff))
+            f"""SELECT 1 FROM applications
+                 WHERE fingerprint = ? AND status IN ({marks})
+                   AND updated_at >= ?""",
+            (fingerprint, *APPLIED_STATUSES, cutoff))
         return cur.fetchone() is not None
 
     def companies_applied_since(self, days: int) -> set[str]:

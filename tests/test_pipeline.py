@@ -140,7 +140,7 @@ def test_browser_cleanup_kills_stale_chromium_for_same_profile(monkeypatch, tmp_
         if "Get-CimInstance" in str(cmd):
             payload = (
                 '[{"ProcessId":9999,"Name":"chrome.exe","CommandLine":'
-                f'"--user-data-dir={profile_dir} --remote-debugging-port=9222"}]'
+                f'"--user-data-dir={profile_dir} --remote-debugging-port=9222"}}]'
             )
             return subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -309,3 +309,219 @@ def test_force_manual_submit_cannot_be_overridden(config):
     adapter = FakeAdapter(portal, config, page=None)
     with pytest.raises(PortalError, match="refusing to auto-submit"):
         adapter.submit()
+
+
+# ------------------------------------------------- reprocessing the same job
+def _fake_portal(monkeypatch, adapter_cls):
+    monkeypatch.setattr("jobauto.pipeline.session",
+                        lambda portal, cfg, headless=False: contextlib.nullcontext(None))
+    monkeypatch.setattr("jobauto.pipeline.registry.build",
+                        lambda portal, cfg, page: adapter_cls(portal, cfg, page))
+
+
+def test_external_job_is_not_reopened_on_the_next_run(config, db, monkeypatch):
+    """A job handed back as external has been processed. Reopening it every
+    run is how the same posting gets hit day after day."""
+    run_discover(config, db, monkeypatch)
+    seen: list[str] = []
+
+    class _External(FakeAdapter):
+        def open_application(self, job):
+            seen.append(job.fingerprint)
+            return False, "redirects to the employer site -- apply by hand"
+
+    _fake_portal(monkeypatch, _External)
+    first = Pipeline(config, db).apply(limit=10)
+    assert first["external"] >= 1
+    opened_once = list(seen)
+
+    Pipeline(config, db).apply(limit=10)
+    assert seen == opened_once, "external jobs were reopened on the second run"
+
+
+def test_failed_job_is_not_reopened_on_the_next_run(config, db, monkeypatch):
+    run_discover(config, db, monkeypatch)
+    seen: list[str] = []
+
+    class _Boom(FakeAdapter):
+        def open_application(self, job):
+            seen.append(job.fingerprint)
+            raise RuntimeError("apply button moved")
+
+    _fake_portal(monkeypatch, _Boom)
+    first = Pipeline(config, db).apply(limit=10)
+    assert first["failed"] >= 1
+    opened_once = list(seen)
+
+    Pipeline(config, db).apply(limit=10)
+    assert seen == opened_once, "failed jobs were reopened on the second run"
+
+
+def test_shortlist_excludes_every_processed_status(config, db, monkeypatch):
+    run_discover(config, db, monkeypatch)
+    rows = db.shortlist(min_score=60, limit=10)
+    assert rows, "fixture should produce a shortlist"
+
+    for row, status in zip(rows, (AppStatus.EXTERNAL, AppStatus.FAILED,
+                                  AppStatus.SKIPPED)):
+        db.record_application(_job_for(row), status)
+
+    left = {r["fingerprint"] for r in db.shortlist(min_score=60, limit=10)}
+    for row, _ in zip(rows, range(3)):
+        assert row["fingerprint"] not in left
+
+
+def _job_for(row) -> Job:
+    return Job(portal=row["portal"], portal_job_id=row["portal_job_id"],
+               title=row["title"], company=row["company"], url=row["url"],
+               location=row["location"] or "")
+
+
+def test_queued_fingerprint_below_the_threshold_is_still_applied(
+        config, db, monkeypatch):
+    """Queueing a job from the dashboard is a user action -- it must not be
+    filtered out by the shortlist threshold or the top-N window."""
+    run_discover(config, db, monkeypatch)
+    low = [r for r in db.shortlist(min_score=0, limit=50, exclude_applied=False)
+           if r["total"] < 60]
+    assert low, "fixture should produce at least one below-threshold job"
+    target = low[0]["fingerprint"]
+    seen: list[str] = []
+
+    class _Seen(FakeAdapter):
+        def open_application(self, job):
+            seen.append(job.fingerprint)
+            return False, "redirects to the employer site -- apply by hand"
+
+    _fake_portal(monkeypatch, _Seen)
+    Pipeline(config, db).apply(limit=5, fingerprints=[target])
+    assert seen == [target]
+
+
+# ------------------------------------------------- "could not click apply"
+class _StubLocator:
+    def __init__(self, count: int, visible: bool = False):
+        self._count, self._visible = count, visible
+        self.first = self
+
+    def count(self) -> int:
+        return self._count
+
+    def is_visible(self, timeout: int = 0) -> bool:
+        return self._visible
+
+
+class _StubPage:
+    """Answers locator() from a map of selector -> (count, visible)."""
+
+    def __init__(self, matches: dict, url: str = "https://fake/job/1"):
+        self.matches, self.url = matches, url
+
+    def locator(self, selector: str):
+        count, visible = self.matches.get(selector, (0, False))
+        return _StubLocator(count, visible)
+
+
+def _adapter(config, page):
+    portal = config.portals["fake"]
+    portal.raw = {"apply": {"instant_button": "#apply"}}
+    return FakeAdapter(portal, config, page)
+
+
+def test_click_failure_is_recorded_failed_not_external(config, db, monkeypatch):
+    """A timeout is our failure to drive the page. Filing it as "external --
+    apply by hand" both lies in the dashboard and retires the job for good."""
+    run_discover(config, db, monkeypatch)
+
+    class _Timeout(FakeAdapter):
+        def open_application(self, job):
+            return False, "could not click apply: TimeoutError"
+
+    _fake_portal(monkeypatch, _Timeout)
+    result = Pipeline(config, db).apply(limit=3)
+
+    assert result.get("failed"), "a click timeout should count as failed"
+    assert not result.get("external"), "a click timeout is not an ATS redirect"
+
+
+def test_genuine_redirect_is_still_external(config, db, monkeypatch):
+    run_discover(config, db, monkeypatch)
+
+    class _Redirect(FakeAdapter):
+        def open_application(self, job):
+            return False, "redirects to the employer site -- apply by hand"
+
+    _fake_portal(monkeypatch, _Redirect)
+    assert Pipeline(config, db).apply(limit=3).get("external")
+
+
+def test_failed_job_is_retried_after_the_window(config, db, monkeypatch):
+    """Not permanently: a fixed selector has to be able to pick the job up."""
+    from datetime import datetime, timedelta
+    from jobauto.db import RETRY_FAILED_AFTER_HOURS
+
+    run_discover(config, db, monkeypatch)
+    row = db.shortlist(min_score=60, limit=10)[0]
+    db.record_application(_job_for(row), AppStatus.FAILED, error="TimeoutError")
+
+    assert row["fingerprint"] not in {
+        r["fingerprint"] for r in db.shortlist(min_score=60, limit=10)}
+
+    stale = (datetime.now()
+             - timedelta(hours=RETRY_FAILED_AFTER_HOURS + 1)).isoformat()
+    with db.tx() as c:
+        c.execute("UPDATE applications SET updated_at = ? WHERE fingerprint = ?",
+                  (stale, row["fingerprint"]))
+
+    assert row["fingerprint"] in {
+        r["fingerprint"] for r in db.shortlist(min_score=60, limit=10)}
+
+
+def test_login_required_stops_the_portal(config, db, monkeypatch):
+    """A dead session fails every job identically -- walking the whole list
+    timing out is both pointless and the most bot-like thing we could do."""
+    from jobauto.portals.base import LoginRequired
+
+    run_discover(config, db, monkeypatch)
+    attempts = []
+
+    class _LoggedOut(FakeAdapter):
+        def open_application(self, job):
+            attempts.append(job.fingerprint)
+            raise LoginRequired("Not signed in to Fake Portal.")
+
+    _fake_portal(monkeypatch, _LoggedOut)
+    Pipeline(config, db).apply(limit=10)
+    assert len(attempts) == 1, "should stop the portal, not try every job"
+
+
+def test_missing_button_names_the_stale_selector(config):
+    """The message has to say which selector to go and fix."""
+    # FakeAdapter stubs out ensure_logged_in, so this is the signed-in case.
+    adapter = _adapter(config, _StubPage({"#apply": (0, False)}))
+    note = adapter.explain_click_failure("apply", "#apply", TimeoutError())
+    assert "stale" in note
+    assert "config/portals/fake.yaml" in note
+
+
+def test_present_but_unclickable_button_says_so(config):
+    adapter = _adapter(config, _StubPage({"#apply": (1, False)}))
+    note = adapter.explain_click_failure("apply", "#apply", TimeoutError())
+    assert "not clickable" in note
+    assert "stale" not in note
+
+
+def test_missing_button_with_dead_session_raises_login_required(config):
+    """Logged out looks identical to a stale selector on the page; the login
+    check is what tells them apart."""
+    from jobauto.portals.base import LoginRequired
+
+    class _RealLogin(FakeAdapter):
+        ensure_logged_in = PortalAdapter.ensure_logged_in
+
+    portal = config.portals["fake"]
+    portal.raw = {"apply": {"instant_button": "#apply"}}
+    page = _StubPage({"#apply": (0, False)}, url="https://fake/login")
+    adapter = _RealLogin(portal, config, page)
+    with pytest.raises(LoginRequired):
+        adapter.explain_click_failure("apply", "#apply", TimeoutError())

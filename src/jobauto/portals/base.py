@@ -251,10 +251,37 @@ class PortalAdapter(ABC):
         try:
             self.page.locator(button).first.click(timeout=8000)
         except Exception as exc:
-            return False, f"could not click apply: {type(exc).__name__}"
+            return False, self.explain_click_failure("apply", button, exc)
         self.pace()
         self.guard_challenge()
         return True, ""
+
+    def explain_click_failure(self, what: str, selector: str,
+                              exc: Exception) -> str:
+        """Turn a bare TimeoutError into something you can act on.
+
+        A timeout has three very different causes with three different fixes:
+        the session expired, the selector went stale, or the button is there
+        but blocked. Reporting only "TimeoutError" leaves you guessing, and
+        this is the failure people actually hit -- portal DOMs move.
+        """
+        try:
+            present = self.page.locator(selector).count()
+        except Exception:
+            present = -1
+
+        if present == 0:
+            # Raises LoginRequired if the session is dead, which the pipeline
+            # handles by stopping this portal instead of timing out job by job.
+            self.ensure_logged_in()
+            return (f"{what} button is not on the page -- the selector looks "
+                    f"stale: apply.instant_button in "
+                    f"config/portals/{self.id}.yaml ({selector})")
+        if present < 0:
+            return f"could not read the page: {type(exc).__name__}"
+        return (f"{what} button is on the page but was not clickable "
+                f"({type(exc).__name__}) -- it may be disabled, covered by an "
+                f"overlay, or still loading")
 
     def submit(self) -> bool:
         """Only ever called when auto_submit is on AND the portal does not set
