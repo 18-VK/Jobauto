@@ -134,7 +134,8 @@ class Pipeline:
         else:
             rows = self.db.shortlist(min_score=threshold, limit=limit * 3)
         if not rows:
-            self.log("  Nothing shortlisted. Run `discover` first.")
+            self.log(f"  Nothing to apply to. "
+                     f"{self._why_nothing(threshold, fingerprints)}")
             return {}
 
         gate = ReviewGate(self.config, auto=self.config.auto_submit)
@@ -184,6 +185,31 @@ class Pipeline:
                 self.log(f"    {portal.name} unavailable: {type(exc).__name__}: {exc}")
 
         return results
+
+    def _why_nothing(self, threshold: float,
+                     fingerprints: list[str] | None) -> str:
+        """"Run discover first" is only right when there is nothing scored.
+        Every other cause needs a different action, so name it."""
+        if fingerprints:
+            return (f"none of the {len(fingerprints)} queued job(s) are in the "
+                    f"local database -- run discover on this PC first")
+
+        b = self.db.shortlist_breakdown(threshold)
+        if not b["scored"]:
+            return "nothing scored yet. Run `discover` first."
+
+        parts = [f"{b['scored']} scored"]
+        if b["below_threshold"]:
+            parts.append(f"{b['below_threshold']} below the shortlist "
+                         f"threshold of {threshold:g}")
+        if b["already_handled"]:
+            parts.append(f"{b['already_handled']} already applied to, skipped "
+                         f"or handed over as external")
+        if b["recently_failed"]:
+            parts.append(f"{b['recently_failed']} failed recently and will be "
+                         f"retried later")
+        return (", ".join(parts) +
+                ". Lower thresholds.shortlist or run discover for fresh jobs.")
 
     def _apply_on_portal(self, adapter: Any, rows: list[Any],
                          gate: ReviewGate, results: dict[str, int]) -> bool:

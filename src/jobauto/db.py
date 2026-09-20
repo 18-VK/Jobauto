@@ -126,6 +126,27 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
         self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Repair rows written before apply outcomes were classified properly.
+
+        Everything that was not an instant apply used to be filed as
+        `external`, including our own failures to drive the page -- a stale
+        selector, a modal that never opened. Now that `external` is terminal,
+        those rows would retire the job for good and leave an empty shortlist.
+        A genuine redirect always says "apply by hand"; nothing else did.
+        """
+        stale = (datetime.now()
+                 - timedelta(hours=RETRY_FAILED_AFTER_HOURS + 1)
+                 ).isoformat(timespec="seconds")
+        with self.tx() as c:
+            c.execute(
+                """UPDATE applications
+                      SET status = 'failed', updated_at = ?
+                    WHERE status = 'external'
+                      AND COALESCE(error, '') NOT LIKE '%apply by hand%'""",
+                (stale,))
 
     def close(self) -> None:
         self._conn.close()
@@ -301,6 +322,26 @@ class Database:
                 f"WHERE id = ?",
                 (datetime.now().isoformat(timespec="seconds"), *counts.values(), run_id))
 
+    def shortlist_breakdown(self, min_score: float) -> dict[str, int]:
+        """"Nothing shortlisted" has three very different causes and only one
+        of them is "run discover". Say which."""
+        q = lambda sql, *a: int(self._conn.execute(sql, a).fetchone()[0])
+        marks = ",".join("?" for _ in TERMINAL_STATUSES)
+        cutoff = (datetime.now()
+                  - timedelta(hours=RETRY_FAILED_AFTER_HOURS)).isoformat()
+        return {
+            "scored": q("SELECT COUNT(*) FROM scores WHERE dropped = 0"),
+            "below_threshold": q(
+                "SELECT COUNT(*) FROM scores WHERE dropped = 0 AND total < ?",
+                min_score),
+            "already_handled": q(
+                f"""SELECT COUNT(DISTINCT fingerprint) FROM applications
+                     WHERE status IN ({marks})""", *TERMINAL_STATUSES),
+            "recently_failed": q(
+                """SELECT COUNT(DISTINCT fingerprint) FROM applications
+                    WHERE status = 'failed' AND updated_at >= ?""", cutoff),
+        }
+
     def stats(self) -> dict[str, Any]:
         q = lambda sql, *a: self._conn.execute(sql, a).fetchone()[0]
         return {
@@ -310,6 +351,8 @@ class Database:
             "submitted": q("SELECT COUNT(*) FROM applications WHERE status='submitted'"),
             "prepared": q("SELECT COUNT(*) FROM applications WHERE status='prepared'"),
             "skipped": q("SELECT COUNT(*) FROM applications WHERE status='skipped'"),
+            "external": q("SELECT COUNT(*) FROM applications WHERE status='external'"),
+            "failed": q("SELECT COUNT(*) FROM applications WHERE status='failed'"),
             "companies": q("SELECT COUNT(DISTINCT company) FROM applications "
                            "WHERE status='submitted'"),
         }

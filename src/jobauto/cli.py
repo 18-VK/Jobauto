@@ -318,6 +318,8 @@ def cmd_stats(args: argparse.Namespace) -> int:
               "  submitted       {submitted}\n"
               "  prepared        {prepared}\n"
               "  skipped         {skipped}\n"
+              "  external        {external}   (handed to you)\n"
+              "  failed          {failed}   (will be retried)\n"
               "  companies       {companies}\n".format(**s))
         return 0
     finally:

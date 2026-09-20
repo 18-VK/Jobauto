@@ -470,10 +470,16 @@ $('#btn-copy').onclick = async () => {
 /* -------------------------------------------------------------- tasks */
 async function queueTask(kind, payload) {
   try {
-    await api('/api/tasks', { method: 'POST', body: JSON.stringify({ kind, payload }) });
-    alert(agentOnline
-      ? `Queued. Your PC will start within a minute — results appear here.`
-      : `Queued. It will run as soon as your PC comes online.`);
+    const res = await api('/api/tasks', { method: 'POST', body: JSON.stringify({ kind, payload }) });
+    // Saying "Queued." when nothing was queued is how a wedged task queue
+    // looks like a dead button.
+    if (res.already_pending) {
+      alert(`A ${kind} run is already queued or still going — see Activity below.`);
+    } else {
+      alert(agentOnline
+        ? `Queued. Your PC will start within a minute — results appear here.`
+        : `Queued. It will run as soon as your PC comes online.`);
+    }
     loadSummary();
   } catch (e) { alert(e.message); }
 }

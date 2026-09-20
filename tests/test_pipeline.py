@@ -525,3 +525,42 @@ def test_missing_button_with_dead_session_raises_login_required(config):
     adapter = _RealLogin(portal, config, page)
     with pytest.raises(LoginRequired):
         adapter.explain_click_failure("apply", "#apply", TimeoutError())
+
+
+# ------------------------------------------------------- repairing history
+def test_misfiled_external_rows_are_repaired_on_open(config, db, monkeypatch,
+                                                     tmp_path):
+    """Rows written before outcomes were classified: everything that was not
+    an instant apply got filed as external, including our own failures. Left
+    alone they retire the job for good and the shortlist comes back empty."""
+    run_discover(config, db, monkeypatch)
+    rows = db.shortlist(min_score=60, limit=10)
+    real, ours = rows[0], rows[1]
+
+    db.record_application(_job_for(real), AppStatus.EXTERNAL,
+                          error="redirects to the employer site -- apply by hand")
+    db.record_application(_job_for(ours), AppStatus.EXTERNAL,
+                          error="could not click apply: TimeoutError")
+    path = db.path
+    db.close()
+
+    reopened = Database(path)
+    try:
+        left = {r["fingerprint"] for r in reopened.shortlist(min_score=60, limit=10)}
+        assert ours["fingerprint"] in left, "our own failure should be retryable"
+        assert real["fingerprint"] not in left, "a real redirect stays terminal"
+    finally:
+        reopened.close()
+
+
+def test_empty_shortlist_says_why(config, db, monkeypatch):
+    """"Run discover first" is wrong when discover already ran."""
+    run_discover(config, db, monkeypatch)
+    for row in db.shortlist(min_score=60, limit=50):
+        db.record_application(_job_for(row), AppStatus.SUBMITTED)
+
+    lines: list[str] = []
+    Pipeline(config, db, log=lines.append).apply(limit=5)
+    blob = " ".join(lines)
+    assert "already applied" in blob
+    assert "Run `discover` first" not in blob

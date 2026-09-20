@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import yaml
@@ -391,6 +391,7 @@ def create_app() -> Flask:
         auth.touch_agent(g.agent.id, "polling")
         with session() as s:
             uid = g.agent.user_id
+            _reap_stale_tasks(s, uid)
             task = s.scalar(select(Task)
                             .where(Task.user_id == uid, Task.status == "queued")
                             .order_by(Task.created_at).limit(1))
@@ -535,6 +536,32 @@ def create_app() -> Flask:
 
 
 # ------------------------------------------------------------- helpers
+# An agent that dies mid-task -- crash, reboot, closed laptop -- leaves the task
+# it claimed stuck in `running`. Nothing ever clears it, and because a queued
+# task of the same shape is deduped against it, every later Discover silently
+# returns the dead task instead of starting a new one. The button stops working
+# with no error anywhere.
+TASK_STALE_MINUTES = 45
+
+
+def _reap_stale_tasks(s, user_id: int) -> int:
+    cutoff = utcnow() - timedelta(minutes=TASK_STALE_MINUTES)
+    stale = s.scalars(select(Task).where(
+        Task.user_id == user_id,
+        Task.status == "running",
+        Task.claimed_at.is_not(None),
+        Task.claimed_at < cutoff)).all()
+    for task in stale:
+        task.status = "failed"
+        task.finished_at = utcnow()
+        note = (f"no result after {TASK_STALE_MINUTES} minutes -- "
+                "the agent probably stopped mid-task")
+        task.log = ((task.log or "") + "\n" + note).strip()
+    if stale:
+        s.commit()
+    return len(stale)
+
+
 def _no_users() -> bool:
     with session() as s:
         return s.scalar(select(User).limit(1)) is None
