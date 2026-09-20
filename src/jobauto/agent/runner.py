@@ -199,7 +199,8 @@ class LocalAgent:
                                     limit=int(payload.get("limit", 5)),
                                     min_score=payload.get("min_score"),
                                     headless=self.headless,
-                                    fingerprints=fps or None)
+                                    fingerprints=fps or None,
+                                    interactive=False)
             elif kind == "refresh":
                 result = pipe.refresh_profiles(headless=self.headless)
             else:
@@ -229,7 +230,8 @@ class LocalAgent:
         fps = [str(item.get("fingerprint", "")) for item in fingerprints
                if isinstance(item, dict) and item.get("fingerprint")]
         try:
-            pipe.apply(limit=len(fps), headless=self.headless, fingerprints=fps)
+            pipe.apply(limit=len(fps), headless=self.headless,
+                       fingerprints=fps, interactive=False)
             self.push_state(db, config)
         finally:
             if fps:

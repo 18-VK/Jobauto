@@ -193,22 +193,34 @@ def interactive_login(portal: PortalConfig, config: Config) -> bool:
         page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
         print(f"\n  A browser window is open on {portal.name}.")
         print("  Sign in there (including any OTP or MFA step).")
-        print("  Waiting up to 5 minutes...\n")
+        print("  Waiting up to 2 minutes, then I will ask.\n")
 
         if not marker:
             input("  Press Enter here once you are signed in... ")
             return True
 
         try:
-            page.locator(marker).first.wait_for(timeout=300000)
+            page.locator(marker).first.wait_for(timeout=120000)
             print(f"  Signed in to {portal.name}. Session saved to "
                   f"{s.profile_dir}\n")
             return True
         except Exception:
-            print(f"  Could not confirm sign-in to {portal.name}.")
-            print(f"  If you are actually signed in, the "
-                  f"`auth.logged_in_selector` in config/portals/"
-                  f"{portal.id}.yaml is probably stale.\n")
-            return False
+            pass
+
+        # A missing marker does not mean the login failed -- these
+        # selectors go stale constantly, and refusing to keep a session
+        # you can plainly see in the window is no help to anyone. Ask.
+        print(f"  Could not confirm sign-in to {portal.name} automatically.")
+        print(f"  (auth.logged_in_selector in config/portals/{portal.id}"
+              f".yaml is probably stale: {marker})")
+        try:
+            reply = input("  Are you signed in in that window? [y/N] ")
+        except EOFError:
+            reply = ""
+        if reply.strip().lower() in ("y", "yes"):
+            print(f"  Session saved to {s.profile_dir}\n")
+            return True
+        print("  Nothing saved.\n")
+        return False
     finally:
         s.stop()

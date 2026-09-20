@@ -21,12 +21,21 @@ class Decision:
     SKIP = "skip"
     QUIT = "quit"
     OPEN = "open"
+    # Nobody is here to answer. Leave it prepared and reviewable
+    # somewhere else -- the dashboard, or `jobauto review` later.
+    # Distinct from SKIP, which is you actively declining the job.
+    DEFER = "defer"
 
 
 @dataclass
 class ReviewGate:
     config: Any
     auto: bool = False
+    # False when the caller is a daemon (the sync agent). Not inferred
+    # from isatty: the agent is a daemon whether or not it was started
+    # from a terminal, and prompting there hangs the whole run
+    # mid-application with a browser window open.
+    interactive: bool = True
 
     def _banner(self, app: Application, index: int, total: int) -> None:
         job = app.job
@@ -76,10 +85,10 @@ class ReviewGate:
             print("\n  auto_submit is on -- submitting.")
             return Decision.SUBMIT
 
-        if not sys.stdin.isatty():
-            print("\n  Not an interactive terminal; leaving this one prepared.")
-            print("  Review it later with: python -m jobauto review")
-            return Decision.SKIP
+        if not self.interactive or not sys.stdin.isatty():
+            print("\n  Nobody here to review it; leaving it prepared.")
+            print("  Review it in the dashboard, or: python -m jobauto review")
+            return Decision.DEFER
 
         while True:
             choice = input(

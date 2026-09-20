@@ -22,6 +22,40 @@ class ConfigDrivenAdapter(PortalAdapter):
     """Search is entirely declarative. Subclass and override `apply_*` hooks
     for portal-specific application flows."""
 
+    def __init__(self, portal: Any, config: Any, page: Any) -> None:
+        super().__init__(portal, config, page)
+        # Breadcrumbs for why_no_results(). A portal that silently yields
+        # nothing is the single most common failure here, and every step of
+        # the scrape swallows its own errors so one bad card cannot kill a
+        # page -- which leaves no trace of what actually went wrong.
+        self.last_url = ""
+        self.last_card_count = -1
+        self.last_container_seen: bool | None = None
+        self.last_skipped = 0
+
+    def why_no_results(self) -> str:
+        """Name the step that failed, in the order they happen."""
+        where = f"config/portals/{self.id}.yaml"
+        if not self.portal.search.get("url_template"):
+            return f"no search.url_template set in {where}"
+        if not self.portal.search.get("result_card"):
+            return f"no search.result_card set in {where}"
+        if not self.last_url:
+            return "the search page never loaded -- check the url_template"
+        if self.last_card_count < 0:
+            return f"could not read the results page at {self.last_url}"
+        if self.last_card_count == 0:
+            if self.last_container_seen is False:
+                return (f"nothing on the page matched search.results_container "
+                        f"or search.result_card ({where}). Either both "
+                        f"selectors are stale or you are not signed in -- try: "
+                        f"python -m jobauto login --portal {self.id}")
+            return (f"the page loaded but search.result_card matched 0 cards "
+                    f"({where}) -- that selector is stale")
+        return (f"{self.last_card_count} cards matched but {self.last_skipped} "
+                f"were skipped for having no title or url -- "
+                f"search.fields.title / search.fields.url in {where} are stale")
+
     def build_search_url(self, role: dict[str, Any], location: str,
                          page_num: int = 1) -> str:
         """Fill the YAML `url_template`. Unknown placeholders resolve to empty
@@ -76,6 +110,7 @@ class ConfigDrivenAdapter(PortalAdapter):
                 return
             try:
                 self.page.goto(url, wait_until="domcontentloaded", timeout=40000)
+                self.last_url = url
             except Exception:
                 continue
             self.pace()
@@ -104,12 +139,14 @@ class ConfigDrivenAdapter(PortalAdapter):
         if container:
             try:
                 self.page.locator(container).first.wait_for(timeout=15000)
+                self.last_container_seen = True
             except Exception:
-                pass
+                self.last_container_seen = False
 
         try:
             cards = self.page.locator(card_sel)
             count = cards.count()
+            self.last_card_count = count
         except Exception:
             return
 
@@ -126,6 +163,7 @@ class ConfigDrivenAdapter(PortalAdapter):
                         values[name] = self.text_of(card, spec)
 
                 if not values.get("title") or not values.get("url"):
+                    self.last_skipped += 1
                     continue
 
                 url = values["url"]

@@ -107,7 +107,8 @@ def cmd_login(args: argparse.Namespace) -> int:
     targets = ([cfg.portals[p] for p in args.portal if p in cfg.portals]
                if args.portal else cfg.enabled_portals())
     if not targets:
-        print("  No matching portal. Try: python -m jobauto doctor")
+        known = ", ".join(sorted(cfg.portals)) or "none configured"
+        print(f"  No matching portal. Available: {known}")
         return 1
     for portal in targets:
         interactive_login(portal, cfg)

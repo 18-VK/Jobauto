@@ -62,6 +62,7 @@ class Pipeline:
 
         for portal in portals:
             self.log(f"\n  {portal.name}")
+            before = counts["found"]
             try:
                 with session(portal, self.config, headless=headless) as page:
                     adapter = registry.build(portal, self.config, page)
@@ -80,6 +81,13 @@ class Pipeline:
                         except Exception as exc:
                             self.log(f"    search failed: {type(exc).__name__}: {exc}")
                             continue
+
+                    if counts["found"] == before:
+                        # A portal that quietly returns nothing looks the
+                        # same as one switched off. Name the failed step.
+                        why = getattr(adapter, "why_no_results", None)
+                        self.log(f"    no jobs found -- "
+                                 f"{why() if why else 'no results'}")
             except RuntimeError as exc:
                 self.log(f"    {exc}")
             except Exception as exc:
@@ -110,7 +118,8 @@ class Pipeline:
     def apply(self, portal_ids: list[str] | None = None, limit: int = 10,
               min_score: float | None = None, dry_run: bool = False,
               headless: bool = False,
-              fingerprints: list[str] | None = None) -> dict[str, int]:
+              fingerprints: list[str] | None = None,
+              interactive: bool = True) -> dict[str, int]:
         """Prepare applications and run each past the review gate.
 
         `fingerprints` is a narrow allow-list used for queued jobs: we only apply
@@ -135,7 +144,8 @@ class Pipeline:
                          f"{self._why_nothing(threshold, None)}")
             return {}
 
-        gate = ReviewGate(self.config, auto=self.config.auto_submit)
+        gate = ReviewGate(self.config, auto=self.config.auto_submit,
+                          interactive=interactive)
         results = {"prepared": 0, "submitted": 0, "skipped": 0,
                    "external": 0, "failed": 0}
         by_portal: dict[str, list[Any]] = {}
@@ -283,9 +293,11 @@ class Pipeline:
 
             if not on_form:
                 status = _classify(note)
-                self.db.record_application(job, status, error=note)
+                self.db.record_application(job, status, error=note,
+                                           resume_path=app.resume_path)
                 key = {AppStatus.SUBMITTED: "submitted",
-                       AppStatus.EXTERNAL: "external"}.get(status, "failed")
+                       AppStatus.EXTERNAL: "external",
+                       AppStatus.PREPARED: "prepared"}.get(status, "failed")
                 results[key] += 1
                 self.log(f"    {job.title[:40]:<40} {note}")
                 continue
@@ -321,6 +333,10 @@ class Pipeline:
                 self.log("\n  Stopped. Anything already prepared is saved -- "
                          "resume with: python -m jobauto review")
                 return True
+            if decision == Decision.DEFER:
+                # Stays PREPARED so it shows up in the review list -- on the
+                # dashboard, on your phone, or in `jobauto review`.
+                continue
             if decision == Decision.SKIP:
                 self.db.set_status(app_id, AppStatus.SKIPPED)
                 results["skipped"] += 1
@@ -371,6 +387,10 @@ class Pipeline:
 # the dashboard and marks the job done so a fixed selector never gets to retry.
 _APPLIED_MARKERS = ("applied instantly",)
 _EXTERNAL_MARKERS = ("apply by hand",)
+# We got far enough that the application may well be half-made. Retrying would
+# risk a duplicate and dropping it would lose it, so it goes to the review list
+# for you to finish or discard -- which is what the review gate is for.
+_NEEDS_REVIEW_MARKERS = ("needs a look",)
 
 
 def _classify(note: str) -> AppStatus:
@@ -379,6 +399,8 @@ def _classify(note: str) -> AppStatus:
         return AppStatus.SUBMITTED
     if any(m in text for m in _EXTERNAL_MARKERS):
         return AppStatus.EXTERNAL
+    if any(m in text for m in _NEEDS_REVIEW_MARKERS):
+        return AppStatus.PREPARED
     return AppStatus.FAILED
 
 

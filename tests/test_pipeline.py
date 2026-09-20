@@ -620,3 +620,130 @@ def test_genuinely_unknown_queued_job_says_so(config, db, monkeypatch):
     Pipeline(config, db, log=lines.append).apply(
         limit=5, fingerprints=["deadbeefdeadbeef"])
     assert "not in this PC's database" in " ".join(lines)
+
+
+# ------------------------------------------- ambiguous apply -> review list
+def test_unconfirmed_apply_goes_to_the_review_list(config, db, monkeypatch):
+    """Naukri clicked apply but nothing opened. Retrying risks a duplicate and
+    dropping it loses the application, so it belongs in front of a human."""
+    run_discover(config, db, monkeypatch)
+
+    class _NoDrawer(FakeAdapter):
+        def open_application(self, job):
+            return False, ("apply clicked but the question drawer never "
+                           "opened -- needs a look in the browser")
+
+    _fake_portal(monkeypatch, _NoDrawer)
+    result = Pipeline(config, db).apply(limit=1)
+
+    assert result.get("prepared"), "should be prepared, not failed"
+    assert db.pending_review(), "must show up in the review list"
+
+
+def test_confirmed_instant_apply_is_recorded_submitted(config, db, monkeypatch):
+    run_discover(config, db, monkeypatch)
+
+    class _Instant(FakeAdapter):
+        def open_application(self, job):
+            return False, "applied instantly (no screening questions)"
+
+    _fake_portal(monkeypatch, _Instant)
+    assert Pipeline(config, db).apply(limit=1).get("submitted")
+
+
+# --------------------------------------------- why a portal found nothing
+def _adapter_for_diag(config, page, search: dict):
+    from jobauto.portals.generic import ConfigDrivenAdapter
+
+    class _Diag(ConfigDrivenAdapter):
+        def search(self, role):
+            return iter(())
+
+    portal = config.portals["fake"]
+    portal.search = search
+    return _Diag(portal, config, page)
+
+
+def test_stale_card_selector_is_named(config):
+    a = _adapter_for_diag(config, None,
+                          {"url_template": "https://x", "result_card": ".card"})
+    a.last_url, a.last_card_count, a.last_container_seen = "https://x", 0, True
+    assert "result_card" in a.why_no_results()
+    assert "stale" in a.why_no_results()
+
+
+def test_nothing_matching_at_all_suggests_login(config):
+    a = _adapter_for_diag(config, None,
+                          {"url_template": "https://x", "result_card": ".card"})
+    a.last_url, a.last_card_count, a.last_container_seen = "https://x", 0, False
+    note = a.why_no_results()
+    assert "login --portal fake" in note
+
+
+def test_cards_found_but_fields_stale_is_named(config):
+    a = _adapter_for_diag(config, None,
+                          {"url_template": "https://x", "result_card": ".card"})
+    a.last_url, a.last_card_count, a.last_skipped = "https://x", 12, 12
+    note = a.why_no_results()
+    assert "search.fields.title" in note
+    assert "12" in note
+
+
+def test_missing_template_is_named(config):
+    a = _adapter_for_diag(config, None, {})
+    assert "url_template" in a.why_no_results()
+
+
+# ------------------------------------------------ review from another device
+class _FormAdapter(FakeAdapter):
+    """Lands on a form, so the run reaches the review gate."""
+
+    def open_application(self, job):
+        return True, ""
+
+    def read_questions(self):
+        return []
+
+
+def test_agent_leaves_applications_prepared_for_remote_review(
+        config, db, monkeypatch):
+    """The agent has no human at it. Applications must survive as `prepared`
+    so they reach the dashboard -- marking them skipped loses them."""
+    run_discover(config, db, monkeypatch)
+    _fake_portal(monkeypatch, _FormAdapter)
+
+    result = Pipeline(config, db).apply(limit=2, interactive=False)
+
+    assert result["prepared"] == 2
+    assert result["skipped"] == 0
+    assert len(db.pending_review()) == 2
+
+
+def test_agent_never_blocks_on_input(config, db, monkeypatch):
+    """Started from a terminal, the agent used to hit input() and hang the
+    whole run with a browser window open."""
+    run_discover(config, db, monkeypatch)
+    _fake_portal(monkeypatch, _FormAdapter)
+
+    def boom(*_a, **_k):
+        raise AssertionError("prompted for input in a daemon")
+
+    monkeypatch.setattr("builtins.input", boom)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    Pipeline(config, db).apply(limit=1, interactive=False)
+
+
+def test_deferred_application_is_not_a_declined_one(config, db, monkeypatch):
+    """SKIP means you looked and said no. DEFER means nobody looked yet --
+    and only SKIP should stop the job coming back."""
+    from jobauto.review import Decision, ReviewGate
+
+    gate = ReviewGate(config, auto=False, interactive=False)
+    run_discover(config, db, monkeypatch)
+    row = db.shortlist(min_score=60, limit=1)[0]
+
+    from jobauto.models import Application
+    from jobauto.pipeline import _job_from_row, _score_from_row
+    app = Application(job=_job_from_row(row), score=_score_from_row(row))
+    assert gate.ask(app) == Decision.DEFER

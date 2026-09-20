@@ -32,7 +32,14 @@ class NaukriAdapter(ConfigDrivenAdapter):
             try:
                 self.page.locator(drawer).first.wait_for(timeout=6000)
             except Exception:
-                return False, "apply clicked but no question drawer appeared"
+                # No drawer can mean two very different things: Naukri applied
+                # outright while we were waiting, or the click went nowhere.
+                # Check again before deciding -- getting this wrong either
+                # loses a real application or files a duplicate.
+                if self.applied_successfully():
+                    return False, "applied instantly (no screening questions)"
+                return False, ("apply clicked but the question drawer never "
+                               "opened -- needs a look in the browser")
         return True, ""
 
     def read_questions(self) -> list[str]:
