@@ -49,11 +49,18 @@
     </div>
     {% if not smtp_on %}
     <p class="hint">
-      No email service is configured on this deployment, so the link was written
-      to the <strong>server log</strong> instead. On Render: your service →
-      <strong>Logs</strong> → look for <code>Reset your jobauto password</code>.
-      Only you can see that log. To get real emails, set the
-      <code>SMTP_*</code> variables — see <code>docs/DEPLOY.md</code>.
+      No email service is configured, so the link went to the
+      <strong>server log</strong>. On Render: your service →
+      <strong>Logs</strong> → search <code>JOBAUTO_RESET_LINK</code>. The whole
+      link is on that one line, and only you can read that log.
+      <br><br>
+      Rather not dig through logs? On your PC, with <code>DATABASE_URL</code>
+      set:
+      <br>
+      <code>python scripts/reset_password.py --email you@example.com --password "new-one"</code>
+      <br><br>
+      For real emails, set the <code>SMTP_*</code> variables — see
+      <code>docs/DEPLOY.md</code>.
     </p>
     {% endif %}
     <p class="auth-alt"><a href="{{ url_for('login') }}">Back to sign in</a></p>

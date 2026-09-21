@@ -39,6 +39,11 @@ def send(to: str, subject: str, body: str) -> bool:
     error, but must also not claim an email was sent.
     """
     if not smtp_configured():
+        # Render's log viewer searches line by line, so put the actionable part
+        # on one greppable line before the readable body.
+        link = _first_link(body)
+        if link:
+            log.warning("JOBAUTO_RESET_LINK %s %s", to, link)
         log.warning(
             "SMTP not configured -- message for %s not emailed.\n"
             "--- %s ---\n%s\n--- end ---", to, subject, body)
@@ -74,6 +79,13 @@ def send(to: str, subject: str, body: str) -> bool:
         log.error("SMTP send to %s failed: %s: %s", to, type(exc).__name__, exc)
         log.warning("--- %s ---\n%s\n--- end ---", subject, body)
         return False
+
+
+def _first_link(body: str) -> str:
+    """The URL out of a message body, for the one-line log marker."""
+    import re
+    match = re.search(r"https?://\S+", body or "")
+    return match.group(0) if match else ""
 
 
 def send_password_reset(to: str, link: str, minutes: int) -> bool:

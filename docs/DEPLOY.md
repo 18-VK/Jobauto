@@ -178,10 +178,24 @@ python -m jobauto cloud       # http://127.0.0.1:5058, SQLite, signup open
 
 ## Password reset emails (optional)
 
-Reset works with no email service: the link is written to your **server log**,
-which on Render only you can read (service → **Logs** → search for
-`Reset your jobauto password`). For a one-person deployment that is a perfectly
-serviceable delivery channel.
+Reset works with no email service: the link goes to your **server log**, which
+on Render only you can read (service → **Logs** → search `JOBAUTO_RESET_LINK`;
+the whole link sits on that one line).
+
+**Or skip the browser entirely.** With `DATABASE_URL` set locally, you can set a
+password straight against the database — no running web service required, which
+also makes it the way back in if the app itself is down:
+
+```powershell
+$env:DATABASE_URL = "<your-supabase-url>"
+$env:PYTHONPATH = "src"
+
+python scripts/reset_password.py --list
+python scripts/reset_password.py --email you@example.com --password "a-new-password"
+
+# or mint a link to open in the browser instead
+python scripts/reset_password.py --email you@example.com --link https://your-app.onrender.com
+```
 
 To get real emails instead, set these in Render → **Environment**. Any SMTP
 provider works; Brevo and Resend both have free tiers, and Gmail works with an
@@ -235,6 +249,6 @@ backs off and retries up to 10 minutes. If it persists, check the Render logs.
 **Jobs aren't appearing** — run `python -m jobauto doctor` on the PC. Portal
 selectors may need updating; see "Known limits" in [CLAUDE.md](../CLAUDE.md).
 
-**Forgot your password and no email configured** — click *Forgot your password?*,
-then read the link out of the Render log. If you would rather start clean, set
-`JOBAUTO_ALLOW_SIGNUP=1`, make a second account, and set it back to `0`.
+**Forgot your password and no email configured** — either search the Render log
+for `JOBAUTO_RESET_LINK`, or set one directly with
+`scripts/reset_password.py --email you@example.com --password "..."`.
