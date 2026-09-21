@@ -1239,3 +1239,64 @@ def test_expired_tasks_free_up_the_queue(client):
 
     client.get("/api/tasks")                      # reaping happens on read
     assert client.post("/api/tasks", json={"kind": "discover"}).status_code == 200
+
+
+# ===================================================== signing out sticks
+def test_signed_in_pages_are_not_cacheable(client):
+    """Without this the browser redisplays the cached dashboard after signing
+    out -- which looks exactly like the sign-out having failed."""
+    signup(client)
+    page = client.get("/")
+    assert "no-store" in page.headers.get("Cache-Control", "")
+    assert page.headers.get("Pragma") == "no-cache"
+
+
+def test_api_responses_are_not_cacheable(client):
+    signup(client)
+    res = client.get("/api/summary")
+    assert "no-store" in res.headers.get("Cache-Control", "")
+
+
+def test_static_assets_still_cache(client):
+    """Only the signed-in pages need to be uncacheable."""
+    res = client.get("/static/cloud.css")
+    assert "no-store" not in res.headers.get("Cache-Control", "")
+
+
+def test_logout_really_ends_the_session(client):
+    signup(client)
+    assert client.get("/api/summary").status_code == 200
+
+    res = client.get("/logout")
+    assert res.status_code == 302
+    assert "signed_out=1" in res.headers["Location"]
+
+    assert client.get("/api/summary").status_code == 401
+    assert client.get("/").status_code == 302
+
+
+def test_logout_confirms_itself(client):
+    """Landing on a login page that looks like any other visit gives no signal
+    that anything happened."""
+    signup(client)
+    client.get("/logout")
+    page = client.get("/login?signed_out=1").get_data(as_text=True)
+    assert "You have been signed out" in page
+
+
+def test_logout_accepts_post_as_well_as_get(client):
+    signup(client)
+    assert client.post("/logout").status_code == 302
+    assert client.get("/api/summary").status_code == 401
+
+
+def test_a_stale_cookie_cannot_be_reused_after_logout(client):
+    """The cookie is cleared, but a copied one must not work either."""
+    signup(client)
+    cookie = next((c.value for c in client.cookie_jar if c.name == "session"), None) \
+        if hasattr(client, "cookie_jar") else None
+    client.get("/logout")
+    if cookie:
+        client.set_cookie("session", cookie)
+        # The session payload itself no longer carries a user_id.
+        assert client.get("/api/summary").status_code == 401

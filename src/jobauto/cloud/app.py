@@ -65,12 +65,29 @@ def create_app() -> Flask:
     )
     init_engine()
 
+    @app.after_request
+    def no_store(response):
+        """Keep signed-in pages out of the browser cache.
+
+        Without this the dashboard is cached and the back button -- or simply
+        revisiting the site -- redisplays it after signing out, which looks
+        exactly like the sign-out having failed. Static assets are excluded so
+        they still cache normally.
+        """
+        if request.endpoint != "static":
+            response.headers["Cache-Control"] = (
+                "no-store, no-cache, must-revalidate, max-age=0")
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
     # ------------------------------------------------------------ auth
     @app.get("/login")
     def login():
         if flask_session.get("user_id"):
             return redirect(url_for("dashboard"))
         return render_template("login.html", mode="login",
+                               signed_out=request.args.get("signed_out") == "1",
                                signup_open=auth.signup_open() or _no_users(),
                                needs_code=bool(auth.signup_code()))
 
@@ -112,10 +129,10 @@ def create_app() -> Flask:
         flask_session.permanent = True
         return redirect(url_for("dashboard", welcome=1))
 
-    @app.get("/logout")
+    @app.route("/logout", methods=["GET", "POST"])
     def logout():
         flask_session.clear()
-        return redirect(url_for("login"))
+        return redirect(url_for("login", signed_out=1))
 
     # ------------------------------------------------- password reset
     @app.get("/forgot")

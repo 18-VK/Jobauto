@@ -39,6 +39,7 @@
     <h1>Sign in</h1>
   {% endif %}
 
+  {% if signed_out %}<div class="msg ok">You have been signed out.</div>{% endif %}
   {% if error %}<div class="msg bad">{{ error }}</div>{% endif %}
 
   {# ------------------------------------------------- reset link sent #}
