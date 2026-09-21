@@ -536,3 +536,187 @@ def test_a_running_task_is_not_reaped_too_early(client):
     statuses = {t["id"]: t["status"]
                 for t in client.get("/api/tasks").get_json()["tasks"]}
     assert statuses[task_id] == "running"
+
+
+# ==================================================== password reset
+def _reset_token_for(email="a@b.com"):
+    issued = __import__("jobauto.cloud.auth", fromlist=["auth"]).begin_password_reset(email)
+    return issued[0] if issued else None
+
+
+def test_login_page_offers_signup_and_forgot(client):
+    """The two entry points must be reachable without knowing the URLs."""
+    page = client.get("/login").get_data(as_text=True)
+    assert "/forgot" in page
+    assert "/signup" in page          # no users yet, so signup is open
+
+
+def test_login_page_explains_when_signups_are_closed(client):
+    signup(client)
+    client.get("/logout")
+    page = client.get("/login").get_data(as_text=True)
+    assert "Signups are closed" in page
+    assert "JOBAUTO_ALLOW_SIGNUP" in page
+
+
+def test_forgot_page_renders(client):
+    assert client.get("/forgot").status_code == 200
+
+
+def test_forgot_response_is_identical_for_unknown_email(client):
+    """Otherwise this page reveals who has an account here."""
+    signup(client)
+    client.get("/logout")
+
+    known = client.post("/forgot", data={"email": "a@b.com"}).get_data(as_text=True)
+    unknown = client.post("/forgot", data={"email": "nobody@x.com"}).get_data(as_text=True)
+    assert "a reset link is on its way" in known
+    assert "a reset link is on its way" in unknown
+
+
+def test_reset_token_lets_you_set_a_new_password(client):
+    signup(client)
+    client.get("/logout")
+
+    token = _reset_token_for("a@b.com")
+    assert token
+
+    assert client.get(f"/reset/{token}").status_code == 200
+    res = client.post(f"/reset/{token}",
+                      data={"password": "brand-new-pass-9", "confirm": "brand-new-pass-9"})
+    assert res.status_code == 302                     # signed straight in
+    assert client.get("/api/summary").status_code == 200
+
+    client.get("/logout")
+    assert client.post("/login", data={"email": "a@b.com",
+                                       "password": "brand-new-pass-9"}).status_code == 302
+    assert client.post("/login", data={"email": "a@b.com",
+                                       "password": "correct-horse-42"}).status_code == 400
+
+
+def test_reset_token_is_single_use(client):
+    signup(client)
+    client.get("/logout")
+    token = _reset_token_for("a@b.com")
+
+    client.post(f"/reset/{token}", data={"password": "first-new-pass-1",
+                                         "confirm": "first-new-pass-1"})
+    client.get("/logout")
+
+    again = client.post(f"/reset/{token}", data={"password": "second-new-pass-2",
+                                                 "confirm": "second-new-pass-2"})
+    assert again.status_code == 400
+    assert "expired or was already used" in again.get_data(as_text=True)
+
+
+def test_issuing_a_new_token_kills_the_previous_one(client):
+    """A forwarded or leaked older reset email must stop working."""
+    signup(client)
+    client.get("/logout")
+
+    first = _reset_token_for("a@b.com")
+    second = _reset_token_for("a@b.com")
+    assert first != second
+
+    stale = client.post(f"/reset/{first}", data={"password": "should-not-work-1",
+                                                 "confirm": "should-not-work-1"})
+    assert stale.status_code == 400
+    assert client.post(f"/reset/{second}", data={"password": "this-one-works-2",
+                                                 "confirm": "this-one-works-2"}
+                       ).status_code == 302
+
+
+def test_expired_token_is_rejected(client, monkeypatch):
+    from datetime import timedelta
+    from jobauto.cloud import auth as cauth
+
+    signup(client)
+    client.get("/logout")
+    monkeypatch.setattr(cauth, "RESET_TTL_MINUTES", -1)   # already expired
+    token = _reset_token_for("a@b.com")
+
+    assert client.get(f"/reset/{token}").status_code == 400
+    assert client.post(f"/reset/{token}", data={"password": "too-late-friend-1",
+                                                "confirm": "too-late-friend-1"}
+                       ).status_code == 400
+
+
+def test_garbage_token_is_rejected(client):
+    signup(client)
+    assert client.get("/reset/not-a-real-token").status_code == 400
+
+
+def test_reset_rejects_mismatched_confirmation(client):
+    signup(client)
+    client.get("/logout")
+    token = _reset_token_for("a@b.com")
+    res = client.post(f"/reset/{token}", data={"password": "one-good-password-1",
+                                               "confirm": "different-password-2"})
+    assert res.status_code == 400
+    assert "do not match" in res.get_data(as_text=True)
+
+
+def test_reset_enforces_password_rules(client):
+    signup(client)
+    client.get("/logout")
+    token = _reset_token_for("a@b.com")
+    res = client.post(f"/reset/{token}", data={"password": "short", "confirm": "short"})
+    assert res.status_code == 400
+
+
+def test_token_is_not_stored_in_plaintext(client):
+    """The table must be useless to whoever reads it."""
+    from sqlalchemy import select
+    from jobauto.cloud.db import PasswordReset, session
+
+    signup(client)
+    token = _reset_token_for("a@b.com")
+    with session() as s:
+        rows = s.scalars(select(PasswordReset)).all()
+        stored = [r.token_hash for r in rows if r.used_at is None]
+    assert stored
+    assert token not in stored
+    assert all(len(h) == 64 for h in stored)      # sha256 hex
+
+
+def test_passwords_are_never_stored_in_plaintext(client):
+    """Regression guard on the whole point of hashing."""
+    from sqlalchemy import select
+    from jobauto.cloud.db import User, session
+
+    signup(client, password="correct-horse-42")
+    with session() as s:
+        user = s.scalar(select(User))
+    assert "correct-horse-42" not in user.password_hash
+    assert user.password_hash.startswith(("scrypt:", "pbkdf2:"))
+
+
+def test_change_password_endpoint(client):
+    signup(client)
+    bad = client.post("/api/change-password",
+                      json={"current": "wrong-one-here", "new": "another-good-1"})
+    assert bad.status_code == 400
+
+    ok = client.post("/api/change-password",
+                     json={"current": "correct-horse-42", "new": "another-good-1"})
+    assert ok.status_code == 200
+
+    client.get("/logout")
+    assert client.post("/login", data={"email": "a@b.com",
+                                       "password": "another-good-1"}).status_code == 302
+
+
+def test_mail_falls_back_to_log_without_smtp(monkeypatch, caplog):
+    """No SMTP configured must not mean silent failure."""
+    import logging
+    from jobauto.cloud import mail
+
+    for var in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"):
+        monkeypatch.delenv(var, raising=False)
+    assert mail.smtp_configured() is False
+
+    with caplog.at_level(logging.WARNING, logger="jobauto.mail"):
+        sent = mail.send_password_reset("a@b.com", "https://x/reset/tok", 60)
+
+    assert sent is False                       # must not claim it emailed
+    assert "https://x/reset/tok" in caplog.text

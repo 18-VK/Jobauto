@@ -9,8 +9,11 @@ your URL can create an account on your deployment.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import secrets
+from datetime import timedelta
 from functools import wraps
 from typing import Any, Callable
 
@@ -18,7 +21,9 @@ from flask import g, jsonify, redirect, request, session as flask_session, url_f
 from sqlalchemy import select
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from .db import Agent, User, session, utcnow
+from .db import Agent, PasswordReset, User, session, utcnow
+
+RESET_TTL_MINUTES = 60
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD = 10
@@ -115,6 +120,88 @@ def change_password(user_id: int, current: str, new: str) -> None:
             raise AuthError("Current password is wrong.")
         user.password_hash = generate_password_hash(new)
         s.commit()
+
+
+# ------------------------------------------------------- password reset
+def _hash_token(token: str) -> str:
+    """SHA-256 is right here, unlike for passwords: the token is 32 bytes of
+    real entropy, so there is nothing to brute-force and no need to slow it
+    down. It just must not be stored in a directly usable form."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def begin_password_reset(email: str) -> tuple[str, str] | None:
+    """Issue a reset token. Returns (token, email), or None if no such account.
+
+    The caller must NOT tell the browser which it was -- that would let anyone
+    test whether an address has an account here.
+    """
+    email = (email or "").strip().lower()
+    with session() as s:
+        user = s.scalar(select(User).where(User.email == email))
+        if user is None:
+            return None
+
+        # Any earlier outstanding link stops working the moment a new one is
+        # issued, so a forwarded or leaked old email cannot be replayed.
+        for old in s.scalars(select(PasswordReset).where(
+                PasswordReset.user_id == user.id,
+                PasswordReset.used_at.is_(None))).all():
+            old.used_at = utcnow()
+
+        token = secrets.token_urlsafe(32)
+        s.add(PasswordReset(
+            user_id=user.id,
+            token_hash=_hash_token(token),
+            expires_at=utcnow() + timedelta(minutes=RESET_TTL_MINUTES),
+        ))
+        s.commit()
+        return token, user.email
+
+
+def check_reset_token(token: str) -> User | None:
+    """The user behind a still-valid token, or None. Does not consume it --
+    the reset form needs to render before anything is spent."""
+    if not token:
+        return None
+    with session() as s:
+        record = s.scalar(select(PasswordReset).where(
+            PasswordReset.token_hash == _hash_token(token)))
+        if record is None or not record.valid:
+            return None
+        return s.get(User, record.user_id)
+
+
+def complete_password_reset(token: str, new_password: str) -> User:
+    validate_password(new_password)
+    with session() as s:
+        record = s.scalar(select(PasswordReset).where(
+            PasswordReset.token_hash == _hash_token(token)))
+        if record is None or not record.valid:
+            raise AuthError(
+                "That reset link has expired or was already used. "
+                "Request a new one.")
+
+        user = s.get(User, record.user_id)
+        if user is None:
+            raise AuthError("No such account.")
+
+        user.password_hash = generate_password_hash(new_password)
+        record.used_at = utcnow()          # single use, enforced in the DB row
+        s.commit()
+        s.refresh(user)
+        return user
+
+
+def purge_expired_resets() -> int:
+    """Housekeeping; cheap enough to call on each reset request."""
+    with session() as s:
+        stale = s.scalars(select(PasswordReset).where(
+            PasswordReset.expires_at < utcnow())).all()
+        for record in stale:
+            s.delete(record)
+        s.commit()
+        return len(stale)
 
 
 def _default_preferences() -> str:

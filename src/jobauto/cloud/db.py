@@ -84,6 +84,34 @@ class Agent(Base):
 
 
 # ------------------------------------------------------------------- jobs
+class PasswordReset(Base):
+    """A one-time password reset link.
+
+    Only the SHA-256 of the token is stored, so this table is useless to anyone
+    who reads it -- the same reason the password column holds a hash and not the
+    password. The plaintext token exists only inside the emailed link.
+    """
+    __tablename__ = "password_resets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
+                                                     nullable=True)
+
+    @property
+    def valid(self) -> bool:
+        if self.used_at is not None:
+            return False
+        expiry = self.expires_at
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        return utcnow() < expiry
+
+
 class CloudJob(Base):
     """A job discovered by the agent and pushed up so it is readable with the
     PC off."""

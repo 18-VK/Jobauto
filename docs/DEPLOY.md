@@ -69,8 +69,9 @@ permanent. Use it everywhere below in place of `<YOUR-URL>`.
 
 ## 3. Create your account
 
-Open your URL. The first visit offers signup, and **the first account is the
-owner**. After that, signups are closed (`JOBAUTO_ALLOW_SIGNUP=0` in
+Open your URL and click **Create one** on the login page (or go straight to
+`/signup`). The first account on a fresh deployment is always allowed and is
+**the owner**. After that, signups are closed (`JOBAUTO_ALLOW_SIGNUP=0` in
 `render.yaml`), so nobody who finds the URL can create an account.
 
 To let someone else in later, set `JOBAUTO_ALLOW_SIGNUP=1` and
@@ -173,6 +174,31 @@ standard. Set `DATABASE_URL`, `SECRET_KEY`, `JOBAUTO_ALLOW_SIGNUP=0`.
 python -m jobauto cloud       # http://127.0.0.1:5058, SQLite, signup open
 ```
 
+## Password reset emails (optional)
+
+Reset works with no email service: the link is written to your **server log**,
+which on Render only you can read (service → **Logs** → search for
+`Reset your jobauto password`). For a one-person deployment that is a perfectly
+serviceable delivery channel.
+
+To get real emails instead, set these in Render → **Environment**. Any SMTP
+provider works; Brevo and Resend both have free tiers, and Gmail works with an
+[app password](https://myaccount.google.com/apppasswords) (not your real one):
+
+| Variable | Example |
+|---|---|
+| `SMTP_HOST` | `smtp.gmail.com` |
+| `SMTP_PORT` | `587` (STARTTLS) or `465` (SSL) |
+| `SMTP_USER` | `you@gmail.com` |
+| `SMTP_PASSWORD` | your 16-character app password |
+| `SMTP_FROM` | `jobauto <you@gmail.com>` (optional) |
+
+If SMTP is set but sending fails, the link still goes to the log — a mail
+outage never locks you out.
+
+**Passwords are never emailed, and cannot be.** Only a scrypt hash is stored, so
+there is nothing to recover — reset is the only route, by design.
+
 ## Environment variables
 
 | Variable | Purpose |
@@ -182,6 +208,7 @@ python -m jobauto cloud       # http://127.0.0.1:5058, SQLite, signup open
 | `JOBAUTO_ALLOW_SIGNUP` | `1` opens signup beyond the first account |
 | `JOBAUTO_SIGNUP_CODE` | Invite code required when signup is open |
 | `JOBAUTO_HTTPS` | `1` (default) marks cookies HTTPS-only |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` | Password-reset email. Unset → link goes to the server log |
 
 ## Security notes
 
@@ -205,3 +232,7 @@ backs off and retries up to 10 minutes. If it persists, check the Render logs.
 
 **Jobs aren't appearing** — run `python -m jobauto doctor` on the PC. Portal
 selectors may need updating; see "Known limits" in [CLAUDE.md](../CLAUDE.md).
+
+**Forgot your password and no email configured** — click *Forgot your password?*,
+then read the link out of the Render log. If you would rather start clean, set
+`JOBAUTO_ALLOW_SIGNUP=1`, make a second account, and set it back to `0`.

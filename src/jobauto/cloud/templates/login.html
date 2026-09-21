@@ -3,7 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% if mode == 'signup' %}Create account{% else %}Sign in{% endif %} · jobauto</title>
+<title>
+  {%- if mode == 'signup' %}Create account
+  {%- elif mode in ('forgot', 'forgot_sent') %}Reset password
+  {%- elif mode == 'reset' %}Choose a new password
+  {%- else %}Sign in{% endif %} · jobauto
+</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='cloud.css') }}">
 </head>
 <body class="auth-page">
@@ -15,53 +20,130 @@
   </div>
 
   {% if mode == 'signup' and first %}
+    <h1>Create your account</h1>
     <p class="auth-lead">
-      This deployment has no account yet. The one you create now is the owner.
+      This deployment has no account yet — the one you create now is the owner.
     </p>
   {% elif mode == 'signup' %}
     <h1>Create your account</h1>
+  {% elif mode == 'forgot' %}
+    <h1>Reset your password</h1>
+    <p class="auth-lead">
+      Enter your email and we'll send a link to choose a new one.
+    </p>
+  {% elif mode == 'forgot_sent' %}
+    <h1>Check your email</h1>
+  {% elif mode == 'reset' %}
+    <h1>Choose a new password</h1>
   {% else %}
     <h1>Sign in</h1>
   {% endif %}
 
   {% if error %}<div class="msg bad">{{ error }}</div>{% endif %}
 
-  <form method="post" action="{{ url_for('do_signup' if mode == 'signup' else 'do_login') }}">
-    <label>
-      Email
-      <input type="email" name="email" required autocomplete="email" autofocus>
-    </label>
-
-    <label>
-      Password
-      <input type="password" name="password" required
-             autocomplete="{{ 'new-password' if mode == 'signup' else 'current-password' }}"
-             minlength="10">
-    </label>
-
-    {% if mode == 'signup' and needs_code and not first %}
-    <label>
-      Signup code
-      <input type="text" name="code" required autocomplete="off">
-    </label>
+  {# ------------------------------------------------- reset link sent #}
+  {% if mode == 'forgot_sent' %}
+    <div class="msg ok">
+      If an account exists for that address, a reset link is on its way. It
+      works once and expires in 60 minutes.
+    </div>
+    {% if not smtp_on %}
+    <p class="hint">
+      No email service is configured on this deployment, so the link was written
+      to the <strong>server log</strong> instead. On Render: your service →
+      <strong>Logs</strong> → look for <code>Reset your jobauto password</code>.
+      Only you can see that log. To get real emails, set the
+      <code>SMTP_*</code> variables — see <code>docs/DEPLOY.md</code>.
+    </p>
     {% endif %}
+    <p class="auth-alt"><a href="{{ url_for('login') }}">Back to sign in</a></p>
 
-    {% if mode == 'signup' %}
+  {# ------------------------------------------------------ set new password #}
+  {% elif mode == 'reset' %}
+    <form method="post" action="{{ url_for('do_reset', token=token) }}">
+      <label>
+        New password
+        <input type="password" name="password" required
+               autocomplete="new-password" minlength="10" autofocus>
+      </label>
+      <label>
+        Confirm new password
+        <input type="password" name="confirm" required
+               autocomplete="new-password" minlength="10">
+      </label>
       <p class="hint">At least 10 characters, not all letters or all digits.</p>
+      <button class="btn btn-primary btn-block" type="submit">
+        Set password and sign in
+      </button>
+    </form>
+
+  {# ----------------------------------------------------- forgot: ask email #}
+  {% elif mode == 'forgot' %}
+    <form method="post" action="{{ url_for('do_forgot') }}">
+      <label>
+        Email
+        <input type="email" name="email" required autocomplete="email" autofocus>
+      </label>
+      <button class="btn btn-primary btn-block" type="submit">
+        Send reset link
+      </button>
+    </form>
+    <p class="auth-alt">
+      Remembered it? <a href="{{ url_for('login') }}">Sign in</a>
+    </p>
+
+  {# ------------------------------------------------------ sign in / sign up #}
+  {% else %}
+    <form method="post"
+          action="{{ url_for('do_signup' if mode == 'signup' else 'do_login') }}">
+      <label>
+        Email
+        <input type="email" name="email" required autocomplete="email" autofocus>
+      </label>
+
+      <label>
+        Password
+        <input type="password" name="password" required
+               autocomplete="{{ 'new-password' if mode == 'signup' else 'current-password' }}"
+               minlength="10">
+      </label>
+
+      {% if mode == 'signup' and needs_code and not first %}
+      <label>
+        Signup code
+        <input type="text" name="code" required autocomplete="off">
+      </label>
+      {% endif %}
+
+      {% if mode == 'signup' %}
+        <p class="hint">At least 10 characters, not all letters or all digits.</p>
+      {% endif %}
+
+      <button class="btn btn-primary btn-block" type="submit">
+        {% if mode == 'signup' %}Create account{% else %}Sign in{% endif %}
+      </button>
+    </form>
+
+    {% if mode != 'signup' %}
+      <p class="auth-alt"><a href="{{ url_for('forgot') }}">Forgot your password?</a></p>
     {% endif %}
 
-    <button class="btn btn-primary btn-block" type="submit">
-      {% if mode == 'signup' %}Create account{% else %}Sign in{% endif %}
-    </button>
-  </form>
-
-  <p class="auth-alt">
-    {% if mode == 'signup' %}
-      Already have an account? <a href="{{ url_for('login') }}">Sign in</a>
-    {% elif signup_open %}
-      No account yet? <a href="{{ url_for('signup') }}">Create one</a>
-    {% endif %}
-  </p>
+    <div class="auth-switch">
+      {% if mode == 'signup' %}
+        Already have an account?
+        <a href="{{ url_for('login') }}">Sign in</a>
+      {% elif signup_open %}
+        Don't have an account?
+        <a href="{{ url_for('signup') }}">Create one</a>
+      {% else %}
+        <span class="muted">
+          Signups are closed on this deployment. To allow another account, set
+          <code>JOBAUTO_ALLOW_SIGNUP=1</code> in your host's environment
+          settings.
+        </span>
+      {% endif %}
+    </div>
+  {% endif %}
 
   <p class="auth-foot">
     Your job portal passwords are never stored here — not on this server, not

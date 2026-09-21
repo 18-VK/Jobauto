@@ -89,6 +89,72 @@ def create_app() -> Flask:
         flask_session.clear()
         return redirect(url_for("login"))
 
+    # ------------------------------------------------- password reset
+    @app.get("/forgot")
+    def forgot():
+        return render_template("login.html", mode="forgot")
+
+    @app.post("/forgot")
+    def do_forgot():
+        from . import mail
+
+        auth.purge_expired_resets()
+        email = request.form.get("email", "")
+        issued = auth.begin_password_reset(email)
+
+        delivered_by_email = False
+        if issued:
+            token, address = issued
+            link = url_for("reset", token=token, _external=True)
+            delivered_by_email = mail.send_password_reset(
+                address, link, auth.RESET_TTL_MINUTES)
+
+        # Always the same response, whether or not the account exists --
+        # otherwise this page becomes a way to discover who has an account.
+        return render_template(
+            "login.html", mode="forgot_sent",
+            smtp_on=mail.smtp_configured() and delivered_by_email)
+
+    @app.get("/reset/<token>")
+    def reset(token: str):
+        if auth.check_reset_token(token) is None:
+            return render_template(
+                "login.html", mode="forgot",
+                error="That reset link has expired or was already used. "
+                      "Request a new one."), 400
+        return render_template("login.html", mode="reset", token=token)
+
+    @app.post("/reset/<token>")
+    def do_reset(token: str):
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm", "")
+        if password != confirm:
+            return render_template("login.html", mode="reset", token=token,
+                                   error="The two passwords do not match."), 400
+        try:
+            user = auth.complete_password_reset(token, password)
+        except auth.AuthError as exc:
+            return render_template("login.html", mode="reset", token=token,
+                                   error=str(exc)), 400
+
+        # Sign them straight in; making someone re-type a password they set
+        # ten seconds ago achieves nothing.
+        flask_session.clear()
+        flask_session["user_id"] = user.id
+        flask_session.permanent = True
+        return redirect(url_for("dashboard"))
+
+    @app.post("/api/change-password")
+    @auth.login_required
+    def api_change_password():
+        body = request.get_json(silent=True) or {}
+        try:
+            auth.change_password(g.user.id, body.get("current", ""),
+                                 body.get("new", ""))
+        except auth.AuthError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"ok": True})
+
     # ------------------------------------------------------------ pages
     @app.get("/")
     @auth.login_required
@@ -252,8 +318,11 @@ def create_app() -> Flask:
     @auth.login_required
     def api_save_prefs():
         payload = request.get_json(silent=True) or {}
-        text = (payload.get("yaml") or "").strip()
-        if not text:
+        # Store exactly what was sent. Stripping here silently rewrote the
+        # user's file on every save, so what came back never quite matched
+        # what they typed.
+        text = payload.get("yaml") or ""
+        if not text.strip():
             return jsonify({"error": "preferences yaml cannot be empty"}), 400
         try:
             parsed = yaml.safe_load(text)
@@ -585,24 +654,44 @@ def _json(text: Any, kind: type = dict):
 
 def _validate_preferences(parsed: dict) -> str:
     """Same rules as the local config validator, minus the portal checks the
-    cloud has no visibility into."""
-    weights = (parsed.get("scoring") or {}).get("weights") or {}
-    if not weights:
-        return "preferences.scoring.weights is empty"
-    total = sum(float(v) for v in weights.values())
-    if abs(total - 1.0) > 0.001:
-        return f"scoring weights must sum to 1.0, got {total:.3f}"
+    cloud has no visibility into.
+
+    Reports every problem rather than only the first: bailing out early meant a
+    config with no roles AND no weights only ever complained about weights, so
+    you fixed one thing, saved, and got a fresh error for the next.
+    """
+    problems: list[str] = []
 
     roles = (parsed.get("search") or {}).get("roles") or []
     if not roles:
-        return "search.roles is empty -- nothing to search for"
-    for i, role in enumerate(roles):
-        if not isinstance(role, dict) or not role.get("title"):
-            return f"search.roles[{i}] needs a title"
+        problems.append("search.roles is empty -- nothing to search for")
+    else:
+        for i, role in enumerate(roles):
+            if not isinstance(role, dict) or not role.get("title"):
+                problems.append(f"search.roles[{i}] needs a title")
+
+    weights = (parsed.get("scoring") or {}).get("weights") or {}
+    if not weights:
+        problems.append("preferences.scoring.weights is empty")
+    else:
+        try:
+            total = sum(float(v) for v in weights.values())
+        except (TypeError, ValueError):
+            problems.append("scoring weights must all be numbers")
+        else:
+            if abs(total - 1.0) > 0.001:
+                problems.append(
+                    f"scoring weights must sum to 1.0, got {total:.3f}")
+
     th = parsed.get("thresholds") or {}
-    if th and float(th.get("shortlist", 0)) > float(th.get("priority", 100)):
-        return "thresholds.shortlist is above thresholds.priority"
-    return ""
+    if th:
+        try:
+            if float(th.get("shortlist", 0)) > float(th.get("priority", 100)):
+                problems.append("thresholds.shortlist is above thresholds.priority")
+        except (TypeError, ValueError):
+            problems.append("thresholds must be numbers")
+
+    return "; ".join(problems)
 
 
 def _default_preferences_yaml() -> str:
