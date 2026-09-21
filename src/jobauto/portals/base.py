@@ -320,8 +320,85 @@ class PortalAdapter(ABC):
         except Exception as exc:
             return False, self.explain_click_failure("apply", button, exc)
         self.pace()
+
+        # A new tab means the apply button carried target="_blank", which on
+        # every one of these portals means the employer's own ATS. That is
+        # the hand-off case, not a form we can fill -- and leaving the tab
+        # open is what made a batch end with a dozen of them.
+        opened = self.stray_tabs()
+        if opened:
+            where = ""
+            try:
+                where = (opened[0].url or "")[:120]
+            except Exception:
+                pass
+            self.close_stray_tabs()
+            return False, ("opens the employer's own site in a new tab -- "
+                           "apply by hand" + (f": {where}" if where else ""))
+
         self.guard_challenge()
         return True, ""
+
+    def diagnose_missing_apply(self) -> str:
+        """Why there is no apply button, in the order worth checking.
+
+        Usually it is not a broken selector at all: the posting closed, or you
+        already applied to it. Both are ordinary states of a job, not faults.
+        Reporting "no apply button found" for them sends someone off to edit
+        YAML that was never wrong, and hides the fact that there is simply
+        nothing here to apply to.
+        """
+        for key, message in (
+            ("already_applied", "already applied to this one"),
+            ("closed_notice", "no longer accepting applications"),
+        ):
+            selector = self.sel("apply", key)
+            if not selector:
+                continue
+            try:
+                if self.page.locator(selector).first.is_visible(timeout=1500):
+                    return message
+            except Exception:
+                continue
+
+        signed_in = self.sel("auth", "logged_in_selector")
+        if signed_in:
+            try:
+                if self.page.locator(signed_in).count() == 0:
+                    return (f"signed out -- the page has no apply button "
+                            f"because it has no account. Run: "
+                            f"python -m jobauto login --portal {self.id}")
+            except Exception:
+                pass
+
+        return (f"no apply button matched apply.instant_button "
+                f"(config/portals/{self.id}.yaml) -- that selector is stale")
+
+    # ------------------------------------------------------- stray tabs
+    def stray_tabs(self) -> list:
+        """Pages in this browser other than the one we drive.
+
+        Apply buttons very often carry target="_blank": the employer's own ATS
+        opens in a new tab. Nothing followed it and nothing closed it, so tabs
+        accumulated across a batch until someone closed them by hand -- and
+        every one of them is a live page the browser keeps rendering.
+        """
+        try:
+            return [p for p in self.page.context.pages
+                    if p is not self.page and not p.is_closed()]
+        except Exception:
+            return []
+
+    def close_stray_tabs(self) -> int:
+        """Shut the tabs we did not open. Returns how many."""
+        closed = 0
+        for page in self.stray_tabs():
+            try:
+                page.close()
+                closed += 1
+            except Exception:
+                pass          # a tab that will not close must not stop the run
+        return closed
 
     def explain_click_failure(self, what: str, selector: str,
                               exc: Exception) -> str:

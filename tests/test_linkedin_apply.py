@@ -146,7 +146,10 @@ def test_a_stuck_wizard_says_so(answerer):
     result = wizard.fill_application(answerer)
 
     assert "stopped on step 1" in result.note
-    assert "finish it there" in result.note
+    # Not "open in the browser, finish it there": the run moves to the next
+    # job seconds later and that tab is gone, so it would point nowhere.
+    assert "not submitted" in result.note
+    assert "browser" not in result.note
 
 
 def test_a_runaway_wizard_is_capped(answerer):
@@ -162,7 +165,8 @@ def test_a_runaway_wizard_is_capped(answerer):
     result = wizard.fill_application(answerer)
 
     assert wizard.step == LinkedInAdapter.MAX_STEPS
-    assert "more than" in result.note
+    assert str(LinkedInAdapter.MAX_STEPS) in result.note
+    assert "not submitted" in result.note
 
 
 def test_a_completed_wizard_has_no_note(answerer):

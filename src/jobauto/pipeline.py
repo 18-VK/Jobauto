@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Callable
@@ -26,6 +27,14 @@ from .scoring import Scorer
 # Five headed browsers is already a lot of RAM and a lot of windows;
 # beyond that the portals are not the bottleneck, the machine is.
 MAX_PARALLEL_PORTALS = 5
+
+# A ceiling on one portal's batch, in seconds. Generous: five applications at
+# the default 20-75s pacing is already several minutes, and a slow form is not
+# a fault. This is not a performance budget -- it is the guarantee that an
+# apply task always ends. Without it a single page that never settles leaves
+# the task showing "running" indefinitely, and the only way out is killing the
+# browser by hand.
+APPLY_BUDGET_SECONDS = 25 * 60
 
 
 def within_active_hours(config: Config) -> tuple[bool, str]:
@@ -76,6 +85,14 @@ def _paced(adapter: Any):
     try:
         yield
     finally:
+        # Before the wait, not after: a stray tab left open is a live page the
+        # browser keeps rendering, and across a batch they accumulate until
+        # someone closes them by hand. Every route out of the loop leaves one
+        # behind, which is exactly why this is here and not at the call site.
+        try:
+            adapter.close_stray_tabs()
+        except Exception:
+            pass
         try:
             adapter.pace("between_applications")
         except Exception:
@@ -421,8 +438,18 @@ class Pipeline:
         """Returns True if the caller should stop everything (you quit)."""
         cooldown = int(self.config.application.get("cooldown_days", {})
                        .get("same_job", 3650))
+        deadline = time.monotonic() + APPLY_BUDGET_SECONDS
 
         for i, row in enumerate(rows, start=1):
+            # Checked between applications rather than inside one: interrupting
+            # a half-filled form would leave a row claiming to be prepared when
+            # it is not. Anything already prepared stays in the review list.
+            if time.monotonic() > deadline:
+                self.log(f"    stopping this portal -- the batch has run for "
+                         f"{APPLY_BUDGET_SECONDS // 60} minutes. "
+                         f"{len(rows) - i + 1} left, still queued for next time.")
+                break
+
             # Every path out of this loop must pace, including the ones
             # that continue early. Skipped, external and failed
             # applications used to reach the next portal hit with no
@@ -502,11 +529,25 @@ class Pipeline:
                 if note:
                     self.log(f"      {note}")
 
+                # PREPARED means "form filled, waiting on you to submit".
+                # A fill that stopped halfway is not that, and filing it as
+                # prepared puts a half-made application in the review list
+                # claiming to be ready -- you click submit and nothing
+                # happens. A note from the adapter means it did not finish.
+                status = _classify(note) if note else AppStatus.PREPARED
                 app_id = self.db.record_application(
-                    job, AppStatus.PREPARED, resume_path=app.resume_path,
+                    job, status, resume_path=app.resume_path,
                     answered=app.answered, escalated=app.escalated,
                     error=note)
-                results["prepared"] += 1
+                bucket = {AppStatus.SUBMITTED: "submitted",
+                          AppStatus.EXTERNAL: "external",
+                          AppStatus.PREPARED: "prepared"}.get(status, "failed")
+                results[bucket] += 1
+
+                if status != AppStatus.PREPARED:
+                    # Nothing to review: there is no finished form to submit.
+                    self.log(f"    {job.title[:40]:<40} {note}")
+                    continue
 
                 decision = gate.ask(app, i, len(rows))
                 if decision == Decision.OPEN:
@@ -568,7 +609,15 @@ class Pipeline:
 # site. Everything else is our failure to drive the page -- a stale selector,
 # a modal that never opened -- and recording those as "external" both lies in
 # the dashboard and marks the job done so a fixed selector never gets to retry.
-_APPLIED_MARKERS = ("applied instantly",)
+# "already applied" is the portal telling us this job is finished with. Left
+# out, it classified as `failed`, which is retried daily -- so an application
+# you had genuinely made came back in the shortlist every morning, forever.
+_APPLIED_MARKERS = ("applied instantly", "already applied")
+
+# A posting that closed is terminal too: there is nothing to come back to. It
+# is not `failed`, which would retry it every day until the job is purged.
+_CLOSED_MARKERS = ("no longer accepting applications",)
+
 _EXTERNAL_MARKERS = ("apply by hand",)
 # We got far enough that the application may well be half-made. Retrying risks
 # a duplicate and dropping it loses it, so it goes to the review list for you
@@ -580,6 +629,8 @@ def _classify(note: str) -> AppStatus:
     text = (note or "").lower()
     if any(m in text for m in _APPLIED_MARKERS):
         return AppStatus.SUBMITTED
+    if any(m in text for m in _CLOSED_MARKERS):
+        return AppStatus.SKIPPED
     if any(m in text for m in _EXTERNAL_MARKERS):
         return AppStatus.EXTERNAL
     if any(m in text for m in _NEEDS_REVIEW_MARKERS):

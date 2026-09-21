@@ -32,30 +32,21 @@ class LinkedInAdapter(ConfigDrivenAdapter):
         self.pace()
         self.guard_challenge()
 
-        selectors = []
-        primary = self.sel("apply", "instant_button")
-        if primary:
-            selectors.append(primary)
-        selectors.extend([
-            "button.jobs-apply-button",
-            "button.jobs-apply-button--top-card",
-            "button.jobs-apply-button--secondary",
-            "a[href*='apply'][href*='linkedin']",
-            "a[href*='/apply/']",
-        ])
-
+        # The fallbacks that used to be listed here are already in
+        # apply.instant_button in the YAML, character for character. A second
+        # copy in Python is the thing the portal redesign will miss.
         btn = None
-        for selector in selectors:
+        selector = self.sel("apply", "instant_button")
+        if selector:
             try:
                 candidate = self.page.locator(selector).first
                 if candidate and candidate.is_visible(timeout=2500):
                     btn = candidate
-                    break
             except Exception:
-                continue
+                btn = None
 
         if not btn:
-            return False, "no apply button found"
+            return False, self.diagnose_missing_apply()
 
         label = (btn.inner_text(timeout=4000) or "").lower()
         if "easy apply" not in label and "easy-apply" not in label:
@@ -180,13 +171,17 @@ class LinkedInAdapter(ConfigDrivenAdapter):
             if state == "ready":
                 return combined            # review pane, submit button waiting
             if state == "stuck":
+                # Not "finish it in the browser": the run moves to the next
+                # job and this tab is gone seconds later, so pointing at it
+                # sends you somewhere that no longer exists.
                 combined.note = (
-                    f"the Easy Apply form stopped on step {step + 1} -- it is "
-                    "open in the browser, finish it there")
+                    f"Easy Apply stopped on step {step + 1} of the wizard -- "
+                    f"not submitted. Apply for this one on LinkedIn directly")
                 return combined
 
-        combined.note = (f"more than {self.MAX_STEPS} steps -- left open in the "
-                         "browser for you to finish")
+        combined.note = (f"Easy Apply ran past {self.MAX_STEPS} steps without "
+                         f"reaching a submit button -- not submitted. Apply "
+                         f"for this one on LinkedIn directly")
         return combined
 
     def read_questions(self) -> list[str]:

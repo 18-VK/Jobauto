@@ -149,6 +149,12 @@ class BrowserSession:
         self._pw = sync_playwright().start()
         self._ctx = self._launch_with_fallback()
         self._ctx.add_init_script(_STEALTH)
+        # On the context, not the page: a tab opened later -- an apply button
+        # with target="_blank" -- inherits the context's defaults but not
+        # another page's. Without this, every call on a popup fell back to
+        # Playwright's own 30s, and navigation had no ceiling worth the name.
+        self._ctx.set_default_timeout(20000)
+        self._ctx.set_default_navigation_timeout(40000)
         self.page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
         self.page.set_default_timeout(20000)
         return self.page

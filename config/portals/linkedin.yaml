@@ -46,6 +46,11 @@ apply:
   next_button: "button[aria-label='Continue to next step']"
   review_button: "button[aria-label='Review your application']"
   submit_button: "button[aria-label='Submit application']"
+  # Not failures: a job you already applied to, or one that closed, simply
+  # has no apply button. Without these the missing button is blamed on a
+  # stale selector, which sends you editing YAML that was never wrong.
+  already_applied: ".jobs-s-apply--applied, .artdeco-inline-feedback--success, span.artdeco-button__text:has-text('Applied')"
+  closed_notice: ".jobs-details-top-card__apply-error, .artdeco-inline-feedback--error, :has-text('No longer accepting applications')"
   question_container: ".jobs-easy-apply-form-section__grouping"
   question_text: "label"
   success_indicator: ".artdeco-inline-feedback--success, .jobs-post-apply"
