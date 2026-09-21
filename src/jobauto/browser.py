@@ -267,9 +267,31 @@ def session(portal: PortalConfig, config: Config,
         s.stop()
 
 
+def browser_is_gone(page: Any) -> bool:
+    """True once the window has been closed.
+
+    Closing it is how someone says "done with this one". Without this check a
+    dead page just raises on every poll, the exception is swallowed, and the
+    loop waits out its full timeout before moving to the next portal.
+    """
+    try:
+        if page.is_closed():
+            return True
+    except Exception:
+        return True          # the handle itself is dead
+
+    try:
+        # A persistent context with no pages left is a closed browser.
+        return len(page.context.pages) == 0
+    except Exception:
+        return True
+
+
 def wait_for_login(page: Any, marker: str, minutes: float,
-                   on_tick: Any = None) -> bool:
-    """Poll for the signed-in marker instead of one long blocking wait.
+                   on_tick: Any = None) -> str:
+    """Poll until signed in, or the window is closed, or time runs out.
+
+    Returns "signed-in" | "closed" | "timeout".
 
     A single wait_for() cannot tell "still typing an OTP" from "this
     selector is stale", and whichever it was, the window got closed the
@@ -278,15 +300,19 @@ def wait_for_login(page: Any, marker: str, minutes: float,
     """
     deadline = time.monotonic() + minutes * 60
     while time.monotonic() < deadline:
-        try:
-            if page.locator(marker).first.is_visible(timeout=1500):
-                return True
-        except Exception:
-            pass
+        if browser_is_gone(page):
+            return "closed"
+        if marker:
+            try:
+                if page.locator(marker).first.is_visible(timeout=1500):
+                    return "signed-in"
+            except Exception:
+                if browser_is_gone(page):
+                    return "closed"
         if on_tick:
             on_tick(max(0, deadline - time.monotonic()))
         time.sleep(2)
-    return False
+    return "timeout"
 
 
 def interactive_login(portal: PortalConfig, config: Config,
@@ -306,19 +332,28 @@ def interactive_login(portal: PortalConfig, config: Config,
         page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
         print(f"\n  A browser window is open on {portal.name}.")
         print("  Sign in there, including any OTP or MFA step.")
-        print(f"  I will watch for up to {minutes:g} minutes, then ask."
-              f"  Take as long as you need -- the window stays open.\n")
+        print("  Close the window when you are done and I will move on.")
+        print(f"  Otherwise I will watch for up to {minutes:g} minutes.\n")
 
-        if marker and wait_for_login(page, marker, minutes):
+        outcome = wait_for_login(page, marker, minutes)
+
+        if outcome == "signed-in":
             print(f"  Signed in to {portal.name}. Session saved to "
                   f"{s.profile_dir}\n")
             return True
 
-        # Not finding the marker does not mean the login failed. These
-        # selectors go stale constantly, and closing a window you can
-        # plainly see is signed in helps nobody.
+        if outcome == "closed":
+            # Closing the window is how you say "done with this one". Cookies
+            # are written to the profile as you go, so whatever you completed
+            # before closing is already saved.
+            print(f"  Window closed -- moving on. Anything you completed on "
+                  f"{portal.name} is saved.\n")
+            return True
+
+        # A timeout is not a failed login. These selectors go stale constantly,
+        # and closing a window you can plainly see is signed in helps nobody.
         if marker:
-            print(f"  Could not confirm sign-in automatically.")
+            print("  Could not confirm sign-in automatically.")
             print(f"  (auth.logged_in_selector in config/portals/"
                   f"{portal.id}.yaml may be stale: {marker})")
         try:

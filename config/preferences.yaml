@@ -64,6 +64,12 @@ search:
     exclude_staffing_agencies: false
     min_employee_rating: 3.0   # portal rating out of 5; null disables
 
+  # Search every portal at once rather than one after another. Each portal
+  # has its own browser profile so the sessions never collide, and they are
+  # different sites -- concurrency here is not extra load on any one of them.
+  # Costs one browser window per portal, so turn it off on a small machine.
+  parallel: true
+
   posting:
     # How recently a job must have been posted. Used twice: sent to the portal
     # so stale listings are never fetched, and applied exactly by the scorer.

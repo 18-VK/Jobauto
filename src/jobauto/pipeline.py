@@ -6,6 +6,7 @@ caps, cooldowns, active hours, dedupe, and the decision to stop a portal.
 from __future__ import annotations
 
 import contextlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Callable
 
@@ -18,6 +19,11 @@ from .portals import registry
 from .portals.base import ChallengeDetected, LoginRequired, PortalError
 from .review import Decision, ReviewGate
 from .scoring import Scorer
+
+
+# Five headed browsers is already a lot of RAM and a lot of windows;
+# beyond that the portals are not the bottleneck, the machine is.
+MAX_PARALLEL_PORTALS = 5
 
 
 def within_active_hours(config: Config) -> tuple[bool, str]:
@@ -67,8 +73,45 @@ class Pipeline:
         self.answerer = ScreeningAnswerer(config.profile)
 
     # ------------------------------------------------------------ discover
+    def _search_portal(self, portal: Any, roles: list[dict],
+                       headless: bool) -> tuple[str, list[Job], str]:
+        """Fetch one portal's jobs. Returns (portal_id, jobs, note).
+
+        Deliberately does no scoring and touches no database: this runs on a
+        worker thread, SQLite connections are not shareable across threads, and
+        dedupe has to see jobs in a single order to be correct. Fetching is the
+        slow part and the only part worth parallelising.
+        """
+        jobs: list[Job] = []
+        note = ""
+        try:
+            with session(portal, self.config, headless=headless) as page:
+                adapter = registry.build(portal, self.config, page)
+                for role in roles:
+                    try:
+                        for job in adapter.search(role):
+                            jobs.append(job)
+                    except LoginRequired as exc:
+                        note = str(exc)
+                        break
+                    except ChallengeDetected as exc:
+                        note = str(exc)
+                        break
+                    except Exception as exc:
+                        note = f"search failed: {type(exc).__name__}: {exc}"
+                        continue
+                if not jobs and not note:
+                    why = getattr(adapter, "why_no_results", None)
+                    note = why() if why else "no results"
+        except RuntimeError as exc:
+            note = str(exc)
+        except Exception as exc:
+            note = f"unavailable: {type(exc).__name__}: {exc}"
+        return portal.id, jobs, note
+
     def discover(self, portal_ids: list[str] | None = None,
-                 headless: bool = False) -> dict[str, int]:
+                 headless: bool = False,
+                 parallel: bool | None = None) -> dict[str, int]:
         """Search every enabled portal for every configured role, score the
         results, and store them. Never applies to anything."""
         portals = [p for p in self.config.enabled_portals()
@@ -79,39 +122,48 @@ class Pipeline:
         applied_companies = self.db.companies_applied_since(cooldown)
 
         counts = {"found": 0, "new": 0, "shortlisted": 0, "dropped": 0}
+        if not portals:
+            return counts
 
-        for portal in portals:
-            self.log(f"\n  {portal.name}")
-            before = counts["found"]
-            try:
-                with session(portal, self.config, headless=headless) as page:
-                    adapter = registry.build(portal, self.config, page)
-                    for role in roles:
-                        self.log(f"    searching: {role.get('title')}")
-                        try:
-                            for job in adapter.search(role):
-                                counts["found"] += 1
-                                self._ingest(job, applied_companies, counts)
-                        except LoginRequired as exc:
-                            self.log(f"    {exc}")
-                            break
-                        except ChallengeDetected as exc:
-                            self.log(f"    {exc}")
-                            break
-                        except Exception as exc:
-                            self.log(f"    search failed: {type(exc).__name__}: {exc}")
-                            continue
+        if parallel is None:
+            parallel = bool(self.config.search.get("parallel", True))
+        workers = min(len(portals), MAX_PARALLEL_PORTALS) if parallel else 1
 
-                    if counts["found"] == before:
-                        # A portal that quietly returns nothing looks the
-                        # same as one switched off. Name the failed step.
-                        why = getattr(adapter, "why_no_results", None)
-                        self.log(f"    no jobs found -- "
-                                 f"{why() if why else 'no results'}")
-            except RuntimeError as exc:
-                self.log(f"    {exc}")
-            except Exception as exc:
-                self.log(f"    {portal.name} unavailable: {type(exc).__name__}: {exc}")
+        if workers > 1:
+            self.log(f"\n  searching {len(portals)} portals at once "
+                     f"({workers} browsers)")
+
+        # Fetch in parallel, ingest in series. Each portal has its own browser
+        # profile so the sessions never collide, but scoring and storage stay
+        # on this thread: SQLite connections are not shareable, and dedupe must
+        # see the jobs in one order to collapse them correctly.
+        harvest: list[tuple[str, list[Job], str]] = []
+        if workers == 1:
+            for portal in portals:
+                self.log(f"\n  {portal.name}")
+                harvest.append(self._search_portal(portal, roles, headless))
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(self._search_portal, portal, roles,
+                                       headless): portal
+                           for portal in portals}
+                for future in as_completed(futures):
+                    portal = futures[future]
+                    try:
+                        harvest.append(future.result())
+                    except Exception as exc:
+                        harvest.append((portal.id, [],
+                                        f"{type(exc).__name__}: {exc}"))
+
+        by_id = {p.id: p for p in portals}
+        for portal_id, jobs, note in sorted(harvest, key=lambda h: h[0]):
+            portal = by_id.get(portal_id)
+            self.log(f"\n  {portal.name if portal else portal_id}")
+            for job in jobs:
+                counts["found"] += 1
+                self._ingest(job, applied_companies, counts)
+            if note:
+                self.log(f"    {note}")
 
         return counts
 
