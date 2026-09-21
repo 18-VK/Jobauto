@@ -162,3 +162,78 @@ def test_unreachable_target_fails_loudly(tmp_path):
         capture_output=True, text=True, cwd=ROOT)
     assert res.returncode != 0
     assert "cannot connect to the target database" in res.stdout + res.stderr
+
+
+# ================================================= connection URL diagnostics
+def check_url(url: str):
+    return subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_db_url.py"), url],
+        capture_output=True, text=True, cwd=ROOT)
+
+
+REF = "absysmpotwbawjtpjffu"
+POOLER = f"aws-0-ap-south-1.pooler.supabase.com"
+
+
+def test_good_session_pooler_url_passes():
+    res = check_url(f"postgresql://postgres.{REF}:Secret123@{POOLER}:5432/postgres")
+    assert res.returncode == 0
+    assert "looks well-formed" in res.stdout
+    assert "SESSION pooler" in res.stdout
+    assert REF in res.stdout
+
+
+def test_bare_postgres_user_on_pooler_is_caught():
+    """The actual failure: 'password authentication failed for user postgres'
+    means the username lost its project ref."""
+    res = check_url(f"postgresql://postgres:Secret123@{POOLER}:5432/postgres")
+    assert res.returncode == 1
+    assert 'postgres.<project-ref>' in res.stdout
+    assert "password authentication failed" in res.stdout
+
+
+def test_direct_host_is_flagged_as_unreachable():
+    res = check_url(f"postgresql://postgres:Secret123@db.{REF}.supabase.co:5432/postgres")
+    assert res.returncode == 1
+    assert "IPv6-only" in res.stdout
+    assert f"postgres.{REF}" in res.stdout          # suggests the fix
+
+
+def test_transaction_pooler_is_allowed_with_a_note():
+    res = check_url(f"postgresql://postgres.{REF}:Secret123@{POOLER}:6543/postgres")
+    assert res.returncode == 0
+    assert "TRANSACTION pooler" in res.stdout
+
+
+def test_placeholder_password_is_caught_not_crashed():
+    """Supabase ships [YOUR-PASSWORD]; brackets make urlsplit raise on its own."""
+    res = check_url(f"postgresql://postgres.{REF}:[YOUR-PASSWORD]@{POOLER}:5432/postgres")
+    assert res.returncode == 1
+    assert "placeholder" in res.stdout
+    assert "Traceback" not in res.stdout + res.stderr
+
+
+def test_password_with_at_sign_is_caught():
+    res = check_url(f"postgresql://postgres.{REF}:pa@ssword@{POOLER}:5432/postgres")
+    assert res.returncode == 1
+    assert "more than one @" in res.stdout
+
+
+def test_password_with_hash_is_caught():
+    """A # truncates the URL silently, which is the nastiest of these."""
+    res = check_url(f"postgresql://postgres.{REF}:pass#word@{POOLER}:5432/postgres")
+    assert res.returncode == 1
+    assert "#" in res.stdout and "fragment" in res.stdout
+
+
+def test_password_is_never_printed():
+    secret = "SuperSecret12345"
+    res = check_url(f"postgresql://postgres.{REF}:{secret}@{POOLER}:5432/postgres")
+    assert secret not in res.stdout
+    assert "16 chars" in res.stdout
+
+
+def test_sqlite_url_is_described_simply():
+    res = check_url("sqlite:///cloud.db")
+    assert res.returncode == 0
+    assert "sqlite file" in res.stdout

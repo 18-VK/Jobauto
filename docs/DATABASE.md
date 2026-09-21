@@ -74,15 +74,40 @@ postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432
   **Settings → General → Region**
 - **PASSWORD** — set at creation; resettable under **Settings → Database**
 
+### Passwords with symbols in them
+
+A URL gives `@ # / : [ ]` structural meaning, so a password containing any of
+them silently changes what the URL means:
+
+| Password contains | Symptom | Fix |
+|---|---|---|
+| `@` | `failed to resolve host 'sometext@aws-0-...'` — the text after your `@` became the hostname | write `%40` |
+| `#` | authentication fails against a password that looks right — everything after `#` was dropped as a URL fragment | write `%23` |
+| `/` | the database name is wrong or missing | write `%2F` |
+| `[` `]` | `does not appear to be an IPv4 or IPv6 address` — usually the `[YOUR-PASSWORD]` placeholder left in | replace it with the real password |
+
+Simplest answer is to avoid the problem: **Settings → Database → Reset database
+password**, letters and digits only.
+
 ### Check it before going further
+
+```powershell
+python scripts/check_db_url.py "<your-string>"
+python scripts/check_db_url.py "<your-string>" --connect
+```
+
+Prints every component with the password masked, identifies which Supabase mode
+the string is, and names anything that will fail. **It never prints the
+password**, so its output is safe to paste into a chat or an issue.
+
+Then a read-only test of the whole path:
 
 ```powershell
 python scripts/migrate_db.py --from "<your-string>" --to "sqlite:///throwaway.db" --dry-run
 ```
 
-Reads only, writes nothing. A table of zeroes means the string works on a fresh
-project. A wrong string fails within ten seconds with a named error rather than
-hanging.
+A table of zeroes means the string works on a fresh project. A wrong string
+fails within ten seconds with a named error rather than hanging.
 
 ## 3. Copy your data across
 
@@ -146,9 +171,18 @@ the first visit to `/signup` makes you the owner again.
 **`connection timed out` / `network unreachable`** — you used the direct
 `db.<ref>.supabase.co` host. Switch to the session pooler string.
 
-**`password authentication failed`** — a special character in the password is
-being parsed as part of the URL. Percent-encode it, or reset to an
-alphanumeric password in Supabase → Settings → Database.
+**`password authentication failed for user "postgres"`** — read the username in
+that message. The pooler needs `postgres.<project-ref>`; a bare `postgres` is
+what the *direct* string uses, so the host was changed and the username left
+behind.
+
+**`failed to resolve host '<something>@aws-0-...'`** — your password contains an
+`@`. The URL split there, so the rest became the hostname. Percent-encode it as
+`%40` or reset the password.
+
+**`password authentication failed`** with a username that looks right — a
+special character in the password is being parsed as URL structure. Run
+`scripts/check_db_url.py` on the string; it names the offending character.
 
 **`prepared statement "_pg3_0" already exists`** — the transaction pooler
 (port 6543) with prepared statements on. The app detects `:6543` and disables
