@@ -224,6 +224,7 @@ def create_app() -> Flask:
     def api_summary():
         with session() as s:
             uid = g.user.id
+            _reap_stale_tasks(s, uid)
             counts = {
                 "jobs": s.scalar(select(func.count(CloudJob.id))
                                  .where(CloudJob.user_id == uid,
@@ -484,6 +485,11 @@ def create_app() -> Flask:
     @auth.login_required
     def api_list_tasks():
         with session() as s:
+            # Also reap here. The reaper used to run only on the agent's poll,
+            # which meant a task stranded by a stopped agent could only be
+            # cleared by the very thing that had stopped -- so it sat "running"
+            # indefinitely and the dashboard looked wedged.
+            _reap_stale_tasks(s, g.user.id)
             tasks = s.scalars(
                 select(Task).where(Task.user_id == g.user.id)
                 .order_by(desc(Task.created_at)).limit(25)).all()
@@ -494,6 +500,22 @@ def create_app() -> Flask:
                 "result": _json(t.result_json),
                 "log": t.log,
             } for t in tasks]})
+
+    @app.post("/api/tasks/<int:task_id>/cancel")
+    @auth.login_required
+    def api_cancel_task(task_id: int):
+        """Give up on a task without waiting for it to age out."""
+        with session() as s:
+            task = s.get(Task, task_id)
+            if task is None or task.user_id != g.user.id:
+                return jsonify({"error": "no such task"}), 404
+            if task.status in ("done", "failed", "cancelled"):
+                return jsonify({"ok": True, "status": task.status})
+            task.status = "cancelled"
+            task.finished_at = utcnow()
+            task.log = ((task.log or "") + "\ncancelled from the dashboard").strip()
+            s.commit()
+            return jsonify({"ok": True, "status": task.status})
 
     @app.get("/api/agents")
     @auth.login_required

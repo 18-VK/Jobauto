@@ -905,3 +905,107 @@ def test_agents_endpoint_exposes_the_token_for_the_installer(client):
     assert agent["token"]
     assert len(agent["token"]) > 30
     assert agent["name"]
+
+
+# ================================================= stranded task recovery
+def _strand_task(client, minutes_ago: int):
+    """A task the agent claimed and never reported on."""
+    from datetime import timedelta
+    from sqlalchemy import select
+    from jobauto.cloud.db import Task, session, utcnow
+
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    with session() as s:
+        task = s.get(Task, task_id)
+        task.status = "running"
+        task.claimed_at = utcnow() - timedelta(minutes=minutes_ago)
+        s.commit()
+    return task_id
+
+
+def _status(client, task_id):
+    tasks = client.get("/api/tasks").get_json()["tasks"]
+    return next(t["status"] for t in tasks if t["id"] == task_id)
+
+
+def test_stranded_task_is_reaped_without_the_agent(client):
+    """The reaper used to run only on the agent's poll, so a task stranded by a
+    stopped agent could only be cleared by the thing that had stopped. It sat
+    'running' indefinitely and the dashboard looked wedged."""
+    signup(client)
+    task_id = _strand_task(client, minutes_ago=60 * 24)     # a day old
+
+    # Browsing the dashboard alone must clear it -- no agent involved.
+    assert _status(client, task_id) == "failed"
+
+
+def test_summary_also_reaps(client):
+    signup(client)
+    task_id = _strand_task(client, minutes_ago=60 * 24)
+    client.get("/api/summary")
+    assert _status(client, task_id) == "failed"
+
+
+def test_a_recent_running_task_is_left_alone(client):
+    """A real run in progress must not be killed."""
+    signup(client)
+    task_id = _strand_task(client, minutes_ago=2)
+    assert _status(client, task_id) == "running"
+
+
+def test_reaped_task_explains_itself(client):
+    signup(client)
+    task_id = _strand_task(client, minutes_ago=60 * 24)
+    task = next(t for t in client.get("/api/tasks").get_json()["tasks"]
+                if t["id"] == task_id)
+    assert "agent probably stopped" in task["log"]
+
+
+def test_task_can_be_cancelled_by_hand(client):
+    """45 minutes is a long wait when you already know the agent is gone."""
+    signup(client)
+    task_id = _strand_task(client, minutes_ago=2)
+
+    res = client.post(f"/api/tasks/{task_id}/cancel")
+    assert res.status_code == 200
+    assert res.get_json()["status"] == "cancelled"
+    assert _status(client, task_id) == "cancelled"
+
+
+def test_cancelling_a_queued_task_works_too(client):
+    signup(client)
+    task_id = client.post("/api/tasks", json={"kind": "apply"}).get_json()["task_id"]
+    assert client.post(f"/api/tasks/{task_id}/cancel").get_json()["status"] == "cancelled"
+
+
+def test_cancelling_a_finished_task_is_harmless(client):
+    signup(client)
+    tok = agent_token(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    client.get("/api/agent/work", headers=H(tok))
+    client.post(f"/api/agent/tasks/{task_id}/result", headers=H(tok),
+                json={"status": "done", "result": {}})
+
+    res = client.post(f"/api/tasks/{task_id}/cancel")
+    assert res.status_code == 200
+    assert res.get_json()["status"] == "done"      # not overwritten
+
+
+def test_cannot_cancel_another_users_task(client, monkeypatch):
+    signup(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    client.get("/logout")
+
+    monkeypatch.setenv("JOBAUTO_ALLOW_SIGNUP", "1")
+    signup(client, email="other@x.com")
+    assert client.post(f"/api/tasks/{task_id}/cancel").status_code == 404
+
+
+def test_stranded_tasks_do_not_block_new_ones(client):
+    """The queue cap counts running tasks, so strays must not fill it up."""
+    signup(client)
+    for _ in range(4):
+        _strand_task(client, minutes_ago=60 * 24)
+    # Reaping happens on read, so the cap should be clear again.
+    client.get("/api/tasks")
+    assert client.post("/api/tasks", json={"kind": "discover"}).status_code == 200

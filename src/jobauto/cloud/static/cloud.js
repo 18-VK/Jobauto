@@ -550,6 +550,21 @@ async function loadDevices() {
     row.append(el('span', 'state ' + task.status, task.status));
     row.append(el('span', null, task.kind));
     row.append(el('span', 'muted', ago(task.created_at)));
+
+    // Anything unfinished can be given up on. A run whose agent stopped would
+    // otherwise sit here looking active until it ages out.
+    if (task.status === 'running' || task.status === 'queued') {
+      const stop = el('button', 'btn btn-sm', 'Cancel');
+      stop.onclick = async () => {
+        if (!confirm(`Cancel this ${task.kind} run?`)) return;
+        stop.disabled = true;
+        try {
+          await api(`/api/tasks/${task.id}/cancel`, { method: 'POST' });
+          loadDevices(); loadSummary();
+        } catch (e) { alert(e.message); stop.disabled = false; }
+      };
+      row.append(stop);
+    }
     tasks.append(row);
   });
 }
