@@ -29,6 +29,9 @@ from ..pipeline import Pipeline
 DEFAULT_INTERVAL = 30
 # How often a running task streams its output to the dashboard.
 PROGRESS_INTERVAL = 5
+# How often a long run pushes its scored jobs up, so the dashboard fills while
+# the run is still going rather than all at once at the end.
+STATE_SYNC_INTERVAL = 20
 # Must stay under the server's 3 minute online window, or an agent that is
 # merely backing off gets reported as offline.
 MAX_BACKOFF = 120
@@ -145,7 +148,8 @@ class LocalAgent:
         self.log("  preferences synced from cloud")
 
     # -------------------------------------------------------- uploading
-    def push_state(self, db: Database, config: Config) -> None:
+    def push_state(self, db: Database, config: Config,
+                   quiet: bool = False) -> None:
         from ..scoring import Scorer
         scorer = Scorer(config.preferences, config.profile)
 
@@ -170,8 +174,9 @@ class LocalAgent:
 
         if jobs:
             res = self.cloud.push_jobs(jobs)
-            self.log(f"  pushed {len(jobs)} jobs "
-                     f"({res['added']} new, {res['updated']} updated)")
+            if not quiet:
+                self.log(f"  pushed {len(jobs)} jobs "
+                         f"({res['added']} new, {res['updated']} updated)")
 
         apps = [{
             "fingerprint": r["fingerprint"],
@@ -187,7 +192,8 @@ class LocalAgent:
         } for r in db.pending_review()]
         if apps:
             self.cloud.push_applications(apps)
-            self.log(f"  pushed {len(apps)} pending applications")
+            if not quiet:
+                self.log(f"  pushed {len(apps)} pending applications")
 
     # -------------------------------------------------------- heartbeat
     @contextlib.contextmanager
@@ -225,21 +231,50 @@ class LocalAgent:
 
         task_id = task.get("id")
         last_push = [0.0]
+        last_sync = [time.monotonic()]
+        lock = threading.Lock()
 
         def capture(line: str) -> None:
-            lines.append(str(line))
+            # discover now searches several portals on worker threads, so this
+            # is called concurrently. Appending is atomic, but the joins and
+            # the timers below are not.
+            with lock:
+                lines.append(str(line))
+                del lines[:-600]
+                now = time.monotonic()
+                due_push = task_id and (now - last_push[0]) >= PROGRESS_INTERVAL
+                due_sync = (now - last_sync[0]) >= STATE_SYNC_INTERVAL
+                if due_push:
+                    last_push[0] = now
+                if due_sync:
+                    last_sync[0] = now
+                snapshot = "\n".join(lines) if due_push else ""
+
             self.log(f"    {line}")
 
             # Throttled: a discover emits a line per job, and one request each
             # would hammer a free tier for no benefit.
-            now = time.monotonic()
-            if task_id and (now - last_push[0]) >= PROGRESS_INTERVAL:
-                last_push[0] = now
+            if due_push:
                 try:
-                    self.cloud.task_progress(task_id, "\n".join(lines),
+                    self.cloud.task_progress(task_id, snapshot,
                                              status=f"{kind}: {str(line)[:80]}")
                 except Exception:
                     pass          # progress is nice to have, never fatal
+
+            # Jobs used to reach the dashboard only when the whole task
+            # finished, so a run across five portals showed nothing for its
+            # entire duration. Push what has been scored so far instead.
+            #
+            # Only from the main thread: this reads SQLite, whose connection
+            # belongs to the thread that opened it, and a worker calling it
+            # would raise ProgrammingError into a swallowed except -- a sync
+            # that silently never happens. Scoring runs on the main thread, so
+            # its log lines are the ones that trigger this.
+            if due_sync and threading.current_thread() is threading.main_thread():
+                try:
+                    self.push_state(db, config, quiet=True)
+                except Exception as exc:
+                    self.log(f"    could not sync mid-run: {type(exc).__name__}")
 
         pipe = Pipeline(config, db, log=capture)
         try:

@@ -89,8 +89,24 @@ class PortalAdapter(ABC):
         mult = self.portal.pacing_multiplier
         time.sleep(random.uniform(lo, hi) * mult)
 
+    # Cloudflare and PerimeterX rewrite the URL when they interpose, which is
+    # a far more reliable signal than a CSS selector on a page whose markup
+    # they change whenever they like.
+    _CHALLENGE_URL_MARKERS = ("__cf_chl", "/cdn-cgi/challenge", "px-captcha",
+                              "/challenge-platform", "distil_r_captcha")
+
     def guard_challenge(self) -> None:
         """Abort the portal on a captcha/challenge rather than retrying."""
+        try:
+            current = (self.page.url or "").lower()
+        except Exception:
+            current = ""
+        if any(marker in current for marker in self._CHALLENGE_URL_MARKERS):
+            raise ChallengeDetected(
+                f"{self.portal.name} served a bot check instead of results. "
+                f"Leaving it alone for this run -- retrying into a challenge "
+                f"is how accounts get restricted.")
+
         selector = self.portal.auth.get("challenge_selector")
         if not selector:
             return

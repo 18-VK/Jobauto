@@ -200,11 +200,11 @@ def test_the_database_is_only_touched_from_one_thread(db, monkeypatch):
     main_thread = threading.get_ident()
     seen: list[int] = []
 
-    original = pipeline_ingest = Pipeline._ingest
+    original = Pipeline._ingest
 
-    def spy(self, job, applied, counts):
+    def spy(self, job, applied, counts, portal_id=""):
         seen.append(threading.get_ident())
-        return original(self, job, applied, counts)
+        return original(self, job, applied, counts, portal_id)
 
     monkeypatch.setattr(Pipeline, "_ingest", spy)
     pipeline = Pipeline(make_config(), db, log=lambda *_: None)
@@ -323,3 +323,103 @@ def test_a_live_page_that_never_signs_in_times_out():
             return Loc()
 
     assert wait_for_login(NeverReady(), ".marker", minutes=0.05) == "timeout"
+
+
+# ------------------------------------- live output while the run is going
+def test_progress_is_reported_during_the_run_not_after(db, monkeypatch):
+    """The parallel rewrite collected everything and logged at the end, so the
+    dashboard's live output went silent for the whole run."""
+    seen: list[tuple[float, str]] = []
+    start = time.monotonic()
+
+    def timed_log(line):
+        seen.append((time.monotonic() - start, str(line)))
+
+    pipeline = Pipeline(make_config(), db, log=timed_log)
+    monkeypatch.setattr(pipeline, "_search_portal", Recorder(delay=0.4))
+    pipeline.discover(parallel=True)
+
+    early = [line for when, line in seen if when < 0.35]
+    assert early, "nothing was logged while the portals were still searching"
+
+
+def test_each_line_says_which_portal_it_came_from(db, monkeypatch):
+    """Five searches interleaved in one stream is unreadable untagged."""
+    lines: list[str] = []
+    pipeline = Pipeline(make_config(), db, log=lines.append)
+    monkeypatch.setattr(pipeline, "_search_portal", Recorder(delay=0.05))
+    pipeline.discover(parallel=True)
+
+    tagged = [l for l in lines if l.strip().startswith("[")]
+    assert tagged
+    for portal_id in PORTAL_IDS:
+        assert any(f"[{portal_id}]" in l for l in lines), portal_id
+
+
+def test_scores_appear_as_they_are_found(db, monkeypatch):
+    lines: list[str] = []
+    pipeline = Pipeline(make_config(), db, log=lines.append)
+    monkeypatch.setattr(pipeline, "_search_portal", Recorder(delay=0.05))
+    pipeline.discover(parallel=True)
+
+    scored = [l for l in lines if "Backend Developer" in l and "[" in l]
+    assert scored, "no per-job score lines reached the log"
+
+
+def test_a_summary_closes_the_run(db, monkeypatch):
+    lines: list[str] = []
+    pipeline = Pipeline(make_config(), db, log=lines.append)
+    monkeypatch.setattr(pipeline, "_search_portal", Recorder(delay=0))
+    pipeline.discover(parallel=True)
+
+    assert any("seen" in l and "shortlisted" in l for l in lines)
+
+
+def test_results_land_before_the_slowest_portal_finishes(db, monkeypatch):
+    """Ingesting per portal rather than once at the end is what lets the
+    shortlist fill while a slow portal is still going."""
+    ingested_at: list[float] = []
+    start = time.monotonic()
+    original = Pipeline._ingest
+
+    def spy(self, job, applied, counts, portal_id=""):
+        ingested_at.append(time.monotonic() - start)
+        return original(self, job, applied, counts, portal_id)
+
+    monkeypatch.setattr(Pipeline, "_ingest", spy)
+
+    def uneven(portal, roles, headless):
+        time.sleep(0.6 if portal.id == "hirist" else 0.05)
+        job = Job(portal=portal.id, portal_job_id="1",
+                  title="Backend Developer", company=f"Co {portal.id}",
+                  url=f"https://{portal.id}/1", location="Noida")
+        job.posted_date = date.today()
+        return portal.id, [job], ""
+
+    pipeline = Pipeline(make_config(), db, log=lambda *_: None)
+    monkeypatch.setattr(pipeline, "_search_portal", uneven)
+    pipeline.discover(parallel=True)
+
+    assert ingested_at, "nothing was ingested"
+    assert min(ingested_at) < 0.5, "waited for the slowest portal"
+
+
+def test_mid_run_sync_only_runs_on_the_main_thread():
+    """push_state reads SQLite, whose connection belongs to the thread that
+    opened it. A worker calling it raises into a swallowed except -- a sync
+    that silently never happens."""
+    import inspect
+    from jobauto.agent.runner import LocalAgent
+
+    src = inspect.getsource(LocalAgent.run_task)
+    assert "threading.current_thread() is threading.main_thread()" in src
+    assert "push_state(db, config, quiet=True)" in src
+
+
+def test_capture_is_thread_safe():
+    import inspect
+    from jobauto.agent.runner import LocalAgent
+
+    src = inspect.getsource(LocalAgent.run_task)
+    assert "with lock:" in src
+    assert "del lines[:-600]" in src, "an unbounded log grows all run"

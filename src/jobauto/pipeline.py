@@ -6,6 +6,7 @@ caps, cooldowns, active hours, dedupe, and the decision to stop a portal.
 from __future__ import annotations
 
 import contextlib
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Callable
@@ -71,6 +72,18 @@ class Pipeline:
         self.log = log
         self.scorer = Scorer(config.preferences, config.profile)
         self.answerer = ScreeningAnswerer(config.profile)
+        # Workers log while they run, so the lines must not interleave
+        # mid-sentence in the dashboard's live output.
+        self._log_lock = threading.Lock()
+
+    def _say(self, portal_id: str, message: str) -> None:
+        """Log a line tagged with the portal it came from.
+
+        With five portals running at once, an untagged stream is unreadable --
+        you cannot tell which search found what.
+        """
+        with self._log_lock:
+            self.log(f"    [{portal_id}] {message}")
 
     # ------------------------------------------------------------ discover
     def _search_portal(self, portal: Any, roles: list[dict],
@@ -84,25 +97,37 @@ class Pipeline:
         """
         jobs: list[Job] = []
         note = ""
+        self._say(portal.id, "opening browser")
         try:
             with session(portal, self.config, headless=headless) as page:
                 adapter = registry.build(portal, self.config, page)
                 for role in roles:
+                    title = role.get("title", "?")
+                    self._say(portal.id, f"searching: {title}")
+                    before = len(jobs)
                     try:
                         for job in adapter.search(role):
                             jobs.append(job)
                     except LoginRequired as exc:
                         note = str(exc)
+                        self._say(portal.id, str(exc))
                         break
                     except ChallengeDetected as exc:
                         note = str(exc)
+                        self._say(portal.id, str(exc))
                         break
                     except Exception as exc:
                         note = f"search failed: {type(exc).__name__}: {exc}"
+                        self._say(portal.id, note)
                         continue
+                    self._say(portal.id,
+                              f"{len(jobs) - before} found for {title}")
                 if not jobs and not note:
                     why = getattr(adapter, "why_no_results", None)
                     note = why() if why else "no results"
+                    self._say(portal.id, note)
+                elif jobs:
+                    self._say(portal.id, f"done -- {len(jobs)} jobs to score")
         except RuntimeError as exc:
             note = str(exc)
         except Exception as exc:
@@ -137,11 +162,22 @@ class Pipeline:
         # profile so the sessions never collide, but scoring and storage stay
         # on this thread: SQLite connections are not shareable, and dedupe must
         # see the jobs in one order to collapse them correctly.
-        harvest: list[tuple[str, list[Job], str]] = []
+        def absorb(portal_id: str, jobs: list[Job], note: str) -> None:
+            """Score and store one portal's results, on this thread.
+
+            Called as each portal finishes rather than once at the end, so the
+            shortlist fills while the slower portals are still running and the
+            live output shows scores as they are found.
+            """
+            for job in jobs:
+                counts["found"] += 1
+                self._ingest(job, applied_companies, counts, portal_id)
+            if note:
+                self._say(portal_id, note)
+
         if workers == 1:
             for portal in portals:
-                self.log(f"\n  {portal.name}")
-                harvest.append(self._search_portal(portal, roles, headless))
+                absorb(*self._search_portal(portal, roles, headless))
         else:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {pool.submit(self._search_portal, portal, roles,
@@ -150,25 +186,17 @@ class Pipeline:
                 for future in as_completed(futures):
                     portal = futures[future]
                     try:
-                        harvest.append(future.result())
+                        absorb(*future.result())
                     except Exception as exc:
-                        harvest.append((portal.id, [],
-                                        f"{type(exc).__name__}: {exc}"))
+                        self._say(portal.id, f"{type(exc).__name__}: {exc}")
 
-        by_id = {p.id: p for p in portals}
-        for portal_id, jobs, note in sorted(harvest, key=lambda h: h[0]):
-            portal = by_id.get(portal_id)
-            self.log(f"\n  {portal.name if portal else portal_id}")
-            for job in jobs:
-                counts["found"] += 1
-                self._ingest(job, applied_companies, counts)
-            if note:
-                self.log(f"    {note}")
-
+        self.log(f"\n  {counts['found']} seen, {counts['new']} new, "
+                 f"{counts['shortlisted']} shortlisted, "
+                 f"{counts['dropped']} filtered out")
         return counts
 
     def _ingest(self, job: Job, applied_companies: set[str],
-                counts: dict[str, int]) -> None:
+                counts: dict[str, int], portal_id: str = "") -> None:
         fresh = not self.db.job_exists(job.fingerprint)
         self.db.upsert_job(job)
         if fresh:
@@ -183,8 +211,9 @@ class Pipeline:
         elif band != "below":
             counts["shortlisted"] += 1
             if fresh:
-                self.log(f"      {score.total:5.1f}  {job.title[:44]:<44} "
-                         f"{job.company[:24]}")
+                self._say(portal_id or job.portal,
+                          f"{score.total:5.1f}  {job.title[:40]:<40} "
+                          f"{job.company[:22]}")
 
     # --------------------------------------------------------------- apply
     def apply(self, portal_ids: list[str] | None = None, limit: int = 10,

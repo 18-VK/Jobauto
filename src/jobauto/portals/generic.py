@@ -60,9 +60,43 @@ class ConfigDrivenAdapter(PortalAdapter):
             where += f' (page title: "{self.landed_title}")'
         return where
 
+    # A landing page can say plainly what happened, and it is almost never
+    # "your selectors are stale". Blaming the config for a bot check sends
+    # someone editing YAML that was never wrong.
+    _LANDING_SIGNS = (
+        (("__cf_chl", "/challenge", "captcha", "px-captcha", "/checkpoint",
+          "security check", "are you a human", "verify you are"),
+         "a bot check, not a results page. This portal has decided the "
+         "traffic looks automated. Stop searching it for a while; retrying "
+         "into a challenge is how accounts get restricted"),
+        (("/onboard", "/complete-profile", "/profile/complete", "/register"),
+         "the site wants you to finish setting up your profile before it "
+         "will show jobs. Open it in a normal browser, complete that, then "
+         "search again"),
+        (("/login", "/signin", "/nlogin", "/auth"),
+         "the sign-in page -- the saved session has expired. Run: "
+         "jobauto login --portal {portal}"),
+    )
+
+    def _diagnose_landing(self) -> str:
+        """What the page we ended up on tells us, if anything."""
+        haystack = f"{self.landed_url or self.last_url} {self.landed_title or ''}".lower()
+        for markers, explanation in self._LANDING_SIGNS:
+            if any(marker in haystack for marker in markers):
+                return explanation.format(portal=self.id)
+        return ""
+
     def why_no_results(self) -> str:
         """Name the step that failed, in the order they happen."""
         where = f"config/portals/{self.id}.yaml"
+
+        # Before blaming any selector: if we were sent somewhere that is not a
+        # results page, the selectors were never going to match and saying so
+        # is misleading.
+        landing = self._diagnose_landing()
+        if landing:
+            return f"{landing}{self._landed()}"
+
         if not self.portal.search.get("url_template"):
             return f"no search.url_template set in {where}"
         if not self.portal.search.get("result_card"):
