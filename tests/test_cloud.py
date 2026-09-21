@@ -516,7 +516,7 @@ def test_a_task_the_agent_died_on_stops_blocking_new_ones(client):
 
     with session() as s:
         s.get(Task, task_id).claimed_at = utcnow() - timedelta(
-            minutes=cloud_app.TASK_STALE_MINUTES + 5)
+            seconds=cloud_app.CLAIM_GRACE_SECONDS + 5)
         s.commit()
 
     client.get("/api/agent/work", headers=H(token))       # poll reaps it
@@ -923,7 +923,7 @@ def _strand_task(client, minutes_ago: int):
     return task_id
 
 
-def _status(client, task_id):
+def _task_status(client, task_id):
     tasks = client.get("/api/tasks").get_json()["tasks"]
     return next(t["status"] for t in tasks if t["id"] == task_id)
 
@@ -936,21 +936,21 @@ def test_stranded_task_is_reaped_without_the_agent(client):
     task_id = _strand_task(client, minutes_ago=60 * 24)     # a day old
 
     # Browsing the dashboard alone must clear it -- no agent involved.
-    assert _status(client, task_id) == "failed"
+    assert _task_status(client, task_id) == "failed"
 
 
 def test_summary_also_reaps(client):
     signup(client)
     task_id = _strand_task(client, minutes_ago=60 * 24)
     client.get("/api/summary")
-    assert _status(client, task_id) == "failed"
+    assert _task_status(client, task_id) == "failed"
 
 
 def test_a_recent_running_task_is_left_alone(client):
     """A real run in progress must not be killed."""
     signup(client)
     task_id = _strand_task(client, minutes_ago=2)
-    assert _status(client, task_id) == "running"
+    assert _task_status(client, task_id) == "running"
 
 
 def test_reaped_task_explains_itself(client):
@@ -958,7 +958,7 @@ def test_reaped_task_explains_itself(client):
     task_id = _strand_task(client, minutes_ago=60 * 24)
     task = next(t for t in client.get("/api/tasks").get_json()["tasks"]
                 if t["id"] == task_id)
-    assert "agent probably stopped" in task["log"]
+    assert "no word from the agent" in task["log"]
 
 
 def test_task_can_be_cancelled_by_hand(client):
@@ -969,7 +969,7 @@ def test_task_can_be_cancelled_by_hand(client):
     res = client.post(f"/api/tasks/{task_id}/cancel")
     assert res.status_code == 200
     assert res.get_json()["status"] == "cancelled"
-    assert _status(client, task_id) == "cancelled"
+    assert _task_status(client, task_id) == "cancelled"
 
 
 def test_cancelling_a_queued_task_works_too(client):
@@ -1009,3 +1009,82 @@ def test_stranded_tasks_do_not_block_new_ones(client):
     # Reaping happens on read, so the cap should be clear again.
     client.get("/api/tasks")
     assert client.post("/api/tasks", json={"kind": "discover"}).status_code == 200
+
+
+def test_agent_asking_for_work_frees_its_own_stuck_task(client):
+    """The strongest signal available: the agent runs a task synchronously and
+    only polls again once idle, so asking for work while one is still 'running'
+    means it abandoned it -- crashed, restarted, or the machine rebooted."""
+    from datetime import timedelta
+    from jobauto.cloud import app as cloud_app
+    from jobauto.cloud.db import Task, session, utcnow
+
+    signup(client)
+    tok = agent_token(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    client.get("/api/agent/work", headers=H(tok))       # claims it
+    assert _task_status(client, task_id) == "running"
+
+    # Age it past the grace window, then let the agent poll again as it would
+    # after a restart.
+    with session() as s:
+        s.get(Task, task_id).claimed_at = utcnow() - timedelta(
+            seconds=cloud_app.CLAIM_GRACE_SECONDS + 5)
+        s.commit()
+
+    client.get("/api/agent/work", headers=H(tok))
+    assert _task_status(client, task_id) == "failed"
+
+
+def test_a_just_claimed_task_survives_a_concurrent_poll(client):
+    """Two polls racing must not kill a task claimed a second ago."""
+    signup(client)
+    tok = agent_token(client)
+    client.post("/api/tasks", json={"kind": "discover"})
+    task_id = client.get("/api/agent/work", headers=H(tok)).get_json()["task"]["id"]
+
+    client.get("/api/agent/work", headers=H(tok))
+    assert _task_status(client, task_id) == "running"
+
+
+def test_a_long_run_with_a_heartbeat_is_not_reaped(client):
+    """The agent heartbeats every 20s while working, so a slow-but-healthy
+    discover must not be killed by a stopwatch."""
+    from datetime import timedelta
+    from jobauto.cloud.db import Task, session, utcnow
+
+    signup(client)
+    tok = agent_token(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    client.get("/api/agent/work", headers=H(tok))
+
+    with session() as s:                       # running for two hours
+        s.get(Task, task_id).claimed_at = utcnow() - timedelta(hours=2)
+        s.commit()
+
+    client.post("/api/agent/hello", headers=H(tok), json={"status": "running discover"})
+    assert _task_status(client, task_id) == "running"
+
+
+def test_a_wedged_task_eventually_gives_up_even_with_a_live_agent(client):
+    """The other shape of stuck: the agent keeps reporting in but the task
+    never finishes."""
+    from datetime import timedelta
+    from jobauto.cloud import app as cloud_app
+    from jobauto.cloud.db import Task, session, utcnow
+
+    signup(client)
+    tok = agent_token(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    client.get("/api/agent/work", headers=H(tok))
+
+    with session() as s:
+        s.get(Task, task_id).claimed_at = utcnow() - timedelta(
+            hours=cloud_app.TASK_MAX_HOURS + 1)
+        s.commit()
+
+    client.post("/api/agent/hello", headers=H(tok), json={"status": "still going"})
+    assert _task_status(client, task_id) == "failed"
+    task = next(t for t in client.get("/api/tasks").get_json()["tasks"]
+                if t["id"] == task_id)
+    assert "never finished" in task["log"]

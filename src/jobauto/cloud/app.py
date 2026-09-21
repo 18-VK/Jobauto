@@ -582,6 +582,9 @@ def create_app() -> Flask:
         maybe_purge(g.agent.user_id)
         with session() as s:
             uid = g.agent.user_id
+            # An agent asking for work has finished with anything it was
+            # running, whatever the status says.
+            _reap_orphaned_tasks(s, uid)
             _reap_stale_tasks(s, uid)
             task = s.scalar(select(Task)
                             .where(Task.user_id == uid, Task.status == "queued")
@@ -757,25 +760,99 @@ def create_app() -> Flask:
 # task of the same shape is deduped against it, every later Discover silently
 # returns the dead task instead of starting a new one. The button stops working
 # with no error anywhere.
-TASK_STALE_MINUTES = 45
+# The agent heartbeats every 20s while working, so this much silence means it
+# is gone rather than busy.
+AGENT_SILENT_MINUTES = 5
+# A task claimed this recently may belong to a poll still in flight.
+CLAIM_GRACE_SECONDS = 60
+# Backstop for an agent that is alive but wedged on a task it will never finish.
+TASK_MAX_HOURS = 6
 
 
-def _reap_stale_tasks(s, user_id: int) -> int:
-    cutoff = utcnow() - timedelta(minutes=TASK_STALE_MINUTES)
-    stale = s.scalars(select(Task).where(
+def _reap_orphaned_tasks(s, user_id: int) -> int:
+    """Called when an agent asks for work.
+
+    The agent runs a task synchronously and only polls again once it is idle,
+    so an agent asking for work while one of its tasks is still 'running' has
+    demonstrably abandoned it -- it crashed, was restarted, or the machine
+    rebooted. That is a far faster and more certain signal than any timeout.
+
+    The grace period covers the task claimed moments ago by a concurrent poll.
+    """
+    cutoff = utcnow() - timedelta(seconds=CLAIM_GRACE_SECONDS)
+    orphaned = s.scalars(select(Task).where(
         Task.user_id == user_id,
         Task.status == "running",
         Task.claimed_at.is_not(None),
         Task.claimed_at < cutoff)).all()
-    for task in stale:
+
+    for task in orphaned:
         task.status = "failed"
         task.finished_at = utcnow()
-        note = (f"no result after {TASK_STALE_MINUTES} minutes -- "
-                "the agent probably stopped mid-task")
-        task.log = ((task.log or "") + "\n" + note).strip()
-    if stale:
+        task.log = ((task.log or "") +
+                    "\nthe agent asked for new work without finishing this "
+                    "-- it restarted or stopped mid-task").strip()
+    if orphaned:
         s.commit()
-    return len(stale)
+    return len(orphaned)
+
+
+def _reap_stale_tasks(s, user_id: int) -> int:
+    """Fail tasks whose agent is not coming back.
+
+    Liveness, not a stopwatch: the agent heartbeats every 20 seconds while a
+    task runs, so silence means it is gone. A blind timer would instead kill a
+    slow-but-healthy run -- a discover across five portals can legitimately
+    outlast any threshold worth setting.
+
+    TASK_MAX_HOURS is the backstop for the other shape of stuck: an agent that
+    is alive and heartbeating but wedged on a task it will never finish.
+    """
+    running = s.scalars(select(Task).where(
+        Task.user_id == user_id,
+        Task.status == "running",
+        Task.claimed_at.is_not(None))).all()
+    if not running:
+        return 0
+
+    last_seen = s.scalar(select(func.max(Agent.last_seen)).where(
+        Agent.user_id == user_id))
+    if last_seen is not None and last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=timezone.utc)
+
+    now = utcnow()
+    silence_cutoff = now - timedelta(minutes=AGENT_SILENT_MINUTES)
+    agent_alive = last_seen is not None and last_seen > silence_cutoff
+    hard_cutoff = now - timedelta(hours=TASK_MAX_HOURS)
+
+    reaped = 0
+    for task in running:
+        claimed = task.claimed_at
+        if claimed.tzinfo is None:
+            claimed = claimed.replace(tzinfo=timezone.utc)
+
+        # Give every task a grace period, so one claimed moments before the
+        # agent's next heartbeat is never mistaken for an abandoned one.
+        too_young = claimed > now - timedelta(minutes=AGENT_SILENT_MINUTES)
+        if too_young:
+            continue
+
+        if agent_alive and claimed > hard_cutoff:
+            continue
+
+        task.status = "failed"
+        task.finished_at = now
+        note = (f"gave up after {TASK_MAX_HOURS}h -- the agent kept reporting in "
+                "but never finished this task"
+                if agent_alive else
+                f"no word from the agent for over {AGENT_SILENT_MINUTES} "
+                "minutes -- it stopped mid-task")
+        task.log = ((task.log or "") + "\n" + note).strip()
+        reaped += 1
+
+    if reaped:
+        s.commit()
+    return reaped
 
 
 def _no_users() -> bool:

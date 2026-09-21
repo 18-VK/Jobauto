@@ -9,10 +9,12 @@ database leaked tomorrow, nobody would gain access to a single job portal.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import platform
 import random
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -178,6 +180,34 @@ class LocalAgent:
             self.cloud.push_applications(apps)
             self.log(f"  pushed {len(apps)} pending applications")
 
+    # -------------------------------------------------------- heartbeat
+    @contextlib.contextmanager
+    def heartbeat(self, status: str):
+        """Keep reporting in while a long task runs.
+
+        hello() is otherwise only called between polls, so during a discover
+        across five portals the agent looks dead for as long as the run takes.
+        The server uses last_seen to decide a task has been stranded, so
+        without this a slow-but-healthy run gets reaped out from under itself.
+        """
+        stop = threading.Event()
+
+        def beat() -> None:
+            while not stop.wait(20):
+                try:
+                    self.cloud.hello(status)
+                except Exception:
+                    pass          # a missed beat is not worth failing the run
+
+        thread = threading.Thread(target=beat, daemon=True,
+                                  name="jobauto-heartbeat")
+        thread.start()
+        try:
+            yield
+        finally:
+            stop.set()
+            thread.join(timeout=2)
+
     # ------------------------------------------------------------ tasks
     def run_task(self, task: dict, db: Database, config: Config) -> None:
         kind = task.get("kind", "")
@@ -315,9 +345,11 @@ class LocalAgent:
         try:
             if task:
                 self.log(f"  picked up task {task['id']}: {task['kind']}")
-                self.run_task(task, db, config)
+                with self.heartbeat(f"running {task['kind']}"):
+                    self.run_task(task, db, config)
             elif queued:
-                self.apply_queued(queued, db, config)
+                with self.heartbeat("applying queued jobs"):
+                    self.apply_queued(queued, db, config)
         finally:
             db.close()
             # Only once the work has actually been attempted. Clearing before
