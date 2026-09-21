@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import yaml
 from flask import (Flask, flash, g, jsonify, redirect, render_template,
                    request, session as flask_session, url_for)
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import delete, desc, func, or_ as sa_or, select
 
 from . import auth
 from .db import (Agent, Application, CloudJob, Task, User, init_engine,
@@ -244,6 +244,7 @@ def create_app() -> Flask:
     def api_jobs():
         min_score = request.args.get("min_score", type=float)
         portal = request.args.get("portal", "")
+        max_age = request.args.get("max_age_days", type=int)
         state = request.args.get("state", "")
         limit = min(request.args.get("limit", default=100, type=int), 300)
 
@@ -256,6 +257,13 @@ def create_app() -> Flask:
                 stmt = stmt.where(CloudJob.score >= min_score)
             if portal:
                 stmt = stmt.where(CloudJob.portal == portal)
+            if max_age and max_age > 0:
+                # Undated listings are kept rather than hidden: most Indian
+                # portals omit a date, and dropping them would silently remove
+                # most of the results.
+                edge = date.today() - timedelta(days=max_age)
+                stmt = stmt.where(sa_or(CloudJob.posted_date.is_(None),
+                                        CloudJob.posted_date >= edge))
             if state:
                 stmt = stmt.where(CloudJob.state == state)
 
@@ -274,6 +282,8 @@ def create_app() -> Flask:
                 "portal": j.portal,
                 "score": j.score,
                 "band": j.band,
+                "posted_date": j.posted_date.isoformat() if j.posted_date else None,
+                "age_days": _age_days(j.posted_date),
                 "reasons": _json(j.reasons_json, list),
                 "state": j.state,
                 "applied": j.fingerprint in applied,
@@ -622,6 +632,7 @@ def create_app() -> Flask:
                 job.location = (row.get("location") or "")[:200]
                 job.salary_text = (row.get("salary") or "")[:80]
                 job.summary = (row.get("summary") or "")[:2000]
+                job.posted_date = _parse_date(row.get("posted_date"))
                 job.score = float(row.get("score") or 0)
                 job.band = (row.get("band") or "")[:20]
                 job.reasons_json = json.dumps(row.get("reasons") or [])
@@ -733,6 +744,29 @@ def _iso(value: datetime | None) -> str | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.isoformat()
+
+
+def _parse_date(value: Any):
+    """Accept an ISO date string, a date, or nothing."""
+    if not value:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _age_days(posted: Any) -> int | None:
+    if not posted:
+        return None
+    try:
+        return (date.today() - posted).days
+    except Exception:
+        return None
 
 
 def _json(text: Any, kind: type = dict):

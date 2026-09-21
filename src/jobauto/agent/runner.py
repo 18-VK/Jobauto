@@ -148,6 +148,9 @@ class LocalAgent:
             "location": r["location"] or "",
             "salary": _salary_text(r),
             "summary": (r["summary"] or "")[:2000],
+            # What the portal said, not when we found it -- a listing can
+            # already be weeks old the first time a search surfaces it.
+            "posted_date": r["posted_date"] or None,
             "score": r["total"],
             "band": scorer.band(r["total"]),
             "reasons": json.loads(r["reasons"] or "[]"),

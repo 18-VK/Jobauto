@@ -218,6 +218,9 @@ search:
   keywords:
     exclude: ["intern", "bpo"]       # these drop a job outright
 
+  posting:
+    max_age_days: 7                  # only jobs posted in the last week
+
   locations:
     preferred: ["Noida", "Remote"]
     blocked: ["Chennai"]
@@ -272,7 +275,7 @@ and it measurably lifts inbound.
 ## Tests
 
 ```bash
-python -m pytest -q      # 198 tests, no browser or network required
+python -m pytest -q      # 260 tests, no browser or network required
 ```
 
 ## Layout

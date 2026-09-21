@@ -108,6 +108,7 @@ class ConfigDrivenAdapter(PortalAdapter):
             "exp": str(int(exp.get("current_years", 0) or 0)),
             "exp_codes": self._experience_codes(),
             "days": str(search.get("posting", {}).get("max_age_days", 30)),
+            "days_bucket": self._days_bucket(),
             "seconds": str(int(search.get("posting", {}).get("max_age_days", 30)) * 86400),
             "page": str(page_num),
         }
@@ -118,6 +119,23 @@ class ConfigDrivenAdapter(PortalAdapter):
                 return ""
 
         return template.format_map(_Safe(tokens))
+
+    # Naukri and Hirist only accept these; anything else is ignored outright,
+    # which silently gives you every listing regardless of age.
+    _AGE_BUCKETS = (1, 3, 7, 15, 30)
+
+    def _days_bucket(self) -> str:
+        """Snap max_age_days UP to the nearest value the portal accepts.
+
+        Rounding up rather than to-nearest keeps this a pre-filter: the portal
+        may return slightly older listings than asked for, and the scorer then
+        applies the exact cutoff. Rounding down would hide jobs the user wanted.
+        """
+        want = int(self.config.search.get("posting", {}).get("max_age_days", 30) or 30)
+        for bucket in self._AGE_BUCKETS:
+            if want <= bucket:
+                return str(bucket)
+        return str(self._AGE_BUCKETS[-1])
 
     def _experience_codes(self) -> str:
         """LinkedIn-style banded experience filter codes."""

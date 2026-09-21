@@ -79,6 +79,7 @@ async function loadJobs() {
   const p = new URLSearchParams();
   if ($('#f-min').value) p.set('min_score', $('#f-min').value);
   if ($('#f-portal').value) p.set('portal', $('#f-portal').value);
+  if ($('#f-age').value) p.set('max_age_days', $('#f-age').value);
 
   let d;
   try { d = await api('/api/jobs?' + p); } catch { return; }
@@ -122,6 +123,9 @@ function jobCard(job) {
   if (job.state === 'queued') tags.append(el('span', 'tag tagq', 'queued to apply'));
   if (job.applied) tags.append(el('span', 'tag good', 'applied'));
   if (!job.salary) tags.append(el('span', 'tag warn', 'salary not disclosed'));
+  if (job.age_days === 0) tags.append(el('span', 'tag good', 'posted today'));
+  else if (job.age_days != null) tags.append(el('span', 'tag', `posted ${job.age_days}d ago`));
+  else tags.append(el('span', 'tag', 'no date given'));
   main.append(tags);
 
   head.append(main);
@@ -308,6 +312,7 @@ function parseSearchProfileFromYaml(text) {
     expMin: get(/\n\s*min_years:\s*(\d+)/) || '2',
     expMax: get(/\n\s*max_years:\s*(\d+)/) || '8',
     salaryMin: get(/\n\s*minimum_acceptable_lpa:\s*(\d+(?:\.\d+)?)/) || '10',
+    maxAgeDays: get(/\n\s*max_age_days:\s*(\d+)/) || '21',
     activeStart: activeMatch ? activeMatch[1] : '8',
     activeEnd: activeMatch ? activeMatch[2] : '22',
     include: get(/\n\s*include:\s*\[(.*?)\]/s) || '',
@@ -335,6 +340,7 @@ function fillQuickFilterEditorFromYaml(text) {
   $('#exp-min').value = data.expMin || '2';
   $('#exp-max').value = data.expMax || '8';
   $('#salary-min').value = data.salaryMin || '10';
+  $('#posting-max-age').value = data.maxAgeDays || '21';
   $('#active-hours-start').value = data.activeStart || '8';
   $('#active-hours-end').value = data.activeEnd || '22';
   const selectedModes = (data.workModes && data.workModes.length ? data.workModes : ['remote', 'hybrid', 'onsite']);
@@ -397,7 +403,7 @@ function makeSearchYamlFromForm() {
   const end = normalizeHour($('#active-hours-end').value, 22);
 
   return {
-    search: `search:\n  roles:\n${roleYaml}\n  keywords:\n    include: [${include.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    exclude: [${exclude.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n  experience:\n    min_years: ${Number($('#exp-min').value || 2)}\n    max_years: ${Number($('#exp-max').value || 8)}\n    current_years: ${(Number($('#exp-min').value || 2) + Number($('#exp-max').value || 8)) / 2}\n  locations:\n    preferred: [${locations.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    acceptable: []\n    blocked: []\n    work_mode: [${modes.map((x) => `"${x}"`).join(', ')}]\n    relocate: false\n  compensation:\n    currency: "INR"\n    current_ctc_lpa: ${(Number($('#salary-min').value || 10))}\n    expected_ctc_lpa: ${(Number($('#salary-min').value || 10) + 4)}\n    minimum_acceptable_lpa: ${Number($('#salary-min').value || 10)}\n    negotiable: true\n  company:\n    blocked: []\n    preferred: []\n    exclude_staffing_agencies: false\n    min_employee_rating: 3.0\n  posting:\n    max_age_days: 21\n    require_salary_disclosed: false`,
+    search: `search:\n  roles:\n${roleYaml}\n  keywords:\n    include: [${include.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    exclude: [${exclude.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n  experience:\n    min_years: ${Number($('#exp-min').value || 2)}\n    max_years: ${Number($('#exp-max').value || 8)}\n    current_years: ${(Number($('#exp-min').value || 2) + Number($('#exp-max').value || 8)) / 2}\n  locations:\n    preferred: [${locations.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    acceptable: []\n    blocked: []\n    work_mode: [${modes.map((x) => `"${x}"`).join(', ')}]\n    relocate: false\n  compensation:\n    currency: "INR"\n    current_ctc_lpa: ${(Number($('#salary-min').value || 10))}\n    expected_ctc_lpa: ${(Number($('#salary-min').value || 10) + 4)}\n    minimum_acceptable_lpa: ${Number($('#salary-min').value || 10)}\n    negotiable: true\n  company:\n    blocked: []\n    preferred: []\n    exclude_staffing_agencies: false\n    min_employee_rating: 3.0\n  posting:\n    max_age_days: ${Math.max(1, Number($('#posting-max-age').value || 21))}\n    require_salary_disclosed: false`,
     scoring: `scoring:\n  weights:\n    title_match: 0.30\n    skill_overlap: 0.25\n    experience_fit: 0.15\n    location_fit: 0.15\n    compensation_fit: 0.10\n    company_quality: 0.05`,
     thresholds: `thresholds:\n  shortlist: 60\n  auto_tailor: 70\n  priority: 85`,
     application: `application:\n  auto_submit: false\n  daily_caps:\n    naukri: 25\n    linkedin: 15\n    indeed: 20\n    instahyre: 15\n    hirist: 15\n  pacing:\n    between_actions: [1.5, 4.0]\n    between_applications: [20, 75]\n    active_hours: [${start}, ${end}]\n  cooldown_days:\n    same_job: 3650\n    same_company: 30`
@@ -582,6 +588,7 @@ $('#btn-toggle-done').onclick = () => {
 
 $('#f-min').addEventListener('change', loadJobs);
 $('#f-portal').addEventListener('change', loadJobs);
+$('#f-age').addEventListener('change', loadJobs);
 
 /* --------------------------------------------------------------- boot */
 loadSummary();

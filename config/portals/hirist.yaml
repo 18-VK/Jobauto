@@ -10,7 +10,7 @@ auth:
   logged_in_selector: ".user-menu, .profile-dropdown"
 
 search:
-  url_template: "https://www.hirist.tech/search/{role_slug}-jobs-in-{location_slug}?exp={exp}"
+  url_template: "https://www.hirist.tech/search/{role_slug}-jobs-in-{location_slug}?exp={exp}&jobAge={days_bucket}"
   results_container: ".job-listing, .search-results"
   result_card: ".job-card, .jobTuple"
   fields:

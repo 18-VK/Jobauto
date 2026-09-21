@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import (Boolean, DateTime, Float, ForeignKey, Integer, String,
+from sqlalchemy import (Boolean, Date, DateTime, Float, ForeignKey, Integer, String,
                         Text, UniqueConstraint, create_engine, func, select,
                         text)
 from sqlalchemy.orm import (DeclarativeBase, Mapped, mapped_column,
@@ -136,8 +136,14 @@ class CloudJob(Base):
     reasons_json: Mapped[str] = mapped_column(Text, default="[]")
     dropped: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # When the agent first saw it, which is not the same thing as when the
+    # employer posted it -- a listing can be three weeks old the first time a
+    # search surfaces it.
     discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
                                                     default=utcnow)
+    # What the portal said. Nullable: plenty of listings do not state one.
+    posted_date: Mapped[date | None] = mapped_column(Date, nullable=True,
+                                                     index=True)
     # queued -> the user asked for it; the agent picks it up next poll
     state: Mapped[str] = mapped_column(String(20), default="new", index=True)
 
@@ -232,6 +238,53 @@ def is_transaction_pooler(url: str) -> bool:
 _DDL_LOCK_KEY = 0x6A6F6261  # "joba"
 
 
+def ensure_columns(engine) -> list[str]:
+    """Add columns the models declare but the live tables lack.
+
+    `create_all` creates missing tables and nothing else, so adding a field to
+    an existing model silently does nothing on a deployment that already has
+    the table -- and then every query naming that column fails. This closes the
+    gap for plain nullable additions, which is all this project needs.
+    """
+    from sqlalchemy import inspect
+    from sqlalchemy.schema import CreateColumn
+
+    added: list[str] = []
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue                      # create_all will make it in full
+        live = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in live:
+                continue
+            if not column.nullable and column.default is None                     and column.server_default is None:
+                # Backfilling a NOT NULL column needs a decision this cannot
+                # make safely, so leave it and let the error be visible.
+                continue
+            ddl = CreateColumn(column).compile(engine)
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}"))
+            added.append(f"{table.name}.{column.name}")
+
+        # ADD COLUMN does not bring the column's index with it, and an index
+        # that silently never exists turns a filter into a full table scan.
+        live_indexes = {i["name"] for i in inspector.get_indexes(table.name)}
+        for index in table.indexes:
+            if index.name in live_indexes:
+                continue
+            try:
+                index.create(bind=engine)
+                added.append(f"index {index.name}")
+            except Exception:
+                # A concurrent worker may have won the race; harmless.
+                pass
+
+    return added
+
+
 def create_schema(engine) -> None:
     """Create missing tables, safely when several workers boot at once.
 
@@ -246,6 +299,7 @@ def create_schema(engine) -> None:
     if engine.dialect.name != "postgresql":
         # SQLite deployments are single-process; its own file locking suffices.
         Base.metadata.create_all(engine)
+        _log_added(ensure_columns(engine))
         return
 
     with engine.begin() as conn:
@@ -253,6 +307,20 @@ def create_schema(engine) -> None:
                      {"key": _DDL_LOCK_KEY})
         Base.metadata.create_all(conn)
         # Lock releases when this transaction commits.
+
+    # Same serialisation reason as create_all: concurrent workers must not
+    # both try to add the same column.
+    with engine.begin() as conn:
+        conn.execute(text("SELECT pg_advisory_xact_lock(:key)"),
+                     {"key": _DDL_LOCK_KEY})
+    _log_added(ensure_columns(engine))
+
+
+def _log_added(added: list[str]) -> None:
+    if added:
+        import logging
+        logging.getLogger("jobauto.db").info(
+            "added missing columns: %s", ", ".join(added))
 
 
 def init_engine(url: str | None = None, echo: bool = False):

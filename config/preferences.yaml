@@ -65,7 +65,12 @@ search:
     min_employee_rating: 3.0   # portal rating out of 5; null disables
 
   posting:
-    max_age_days: 21           # ignore stale listings
+    # How recently a job must have been posted. Used twice: sent to the portal
+    # so stale listings are never fetched, and applied exactly by the scorer.
+    # Naukri and Hirist only accept 1/3/7/15/30, so the portal-side value is
+    # rounded UP to the nearest of those -- the scorer still enforces the exact
+    # number, and rounding up never hides something you asked for.
+    max_age_days: 21
     require_salary_disclosed: false
 
 # ----------------------------------------------------------------------------

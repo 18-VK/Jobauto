@@ -54,6 +54,16 @@
     <div class="filters">
       <label>Min score <input type="number" id="f-min" min="0" max="100" placeholder="all"></label>
       <label>Portal <select id="f-portal"><option value="">all</option></select></label>
+      <label>Posted
+        <select id="f-age">
+          <option value="">any time</option>
+          <option value="1">last 24 hours</option>
+          <option value="3">last 3 days</option>
+          <option value="7">last week</option>
+          <option value="15">last 2 weeks</option>
+          <option value="30">last month</option>
+        </select>
+      </label>
     </div>
     <div class="runners">
       <button class="btn" id="btn-discover">Search portals</button>
@@ -132,6 +142,15 @@
       <div>
         <label>Minimum salary</label>
         <input id="salary-min" type="number" min="0" step="1" value="10" />
+      </div>
+      <div>
+        <label>Only jobs posted within</label>
+        <div class="range-pair">
+          <input id="posting-max-age" type="number" min="1" max="90" step="1" value="21" />
+          <span>days</span>
+        </div>
+        <span class="hint-inline">sent to the portal, so stale listings are
+          never fetched</span>
       </div>
       <div>
         <label>Active hours</label>
