@@ -299,8 +299,12 @@ class Database:
                            portal: str = "") -> int:
         """Record an outcome the user chose elsewhere (the cloud dashboard).
 
-        Only moves rows that are still 'prepared', so a decision can never
-        undo an outcome this machine already recorded. Returns rows changed.
+        Moves rows that are 'prepared' or 'failed', never ones this machine
+        has a real outcome for. `failed` is included because it is not an
+        outcome, it is the absence of one -- and a failure is retried daily,
+        so leaving it alone put a job you had told us you applied to back in
+        the shortlist every morning. What you say you did outranks what the
+        automation managed. Returns rows changed.
         """
         now = datetime.now().isoformat(timespec="seconds")
         sql = ["UPDATE applications SET status = ?, updated_at = ?"]
@@ -308,7 +312,7 @@ class Database:
         if status == "submitted":
             sql.append(", submitted_at = COALESCE(submitted_at, ?)")
             args.append(now)
-        sql.append(" WHERE fingerprint = ? AND status = 'prepared'")
+        sql.append(" WHERE fingerprint = ? AND status IN ('prepared', 'failed')")
         args.append(fingerprint)
         if portal:
             sql.append(" AND portal = ?")

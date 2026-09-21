@@ -198,8 +198,12 @@ function appCard(app) {
   card.append(h, el('div', 'meta', `${app.company} · ${app.portal}`));
 
   const tags = el('div', 'tagrow');
-  const cls = { submitted: 'tag good', prepared: 'tag tagq', skipped: 'tag' }[app.status] || 'tag';
-  tags.append(el('span', cls, app.status));
+  const cls = { submitted: 'tag good', prepared: 'tag tagq', skipped: 'tag',
+                external: 'tag warn', failed: 'tag warn' }[app.status] || 'tag';
+  // "external" names the mechanism, not what you have to do about it.
+  const label = { external: 'apply on the employer site',
+                  failed: 'could not be filled' }[app.status] || app.status;
+  tags.append(el('span', cls, label));
   if (app.updated_at) tags.append(el('span', 'tag', ago(app.updated_at)));
   card.append(tags);
 
@@ -240,9 +244,17 @@ function appCard(app) {
     };
     foot.append(undo);
   } else {
-    foot.append(el('span', 'muted', 'filled on your PC, not sent'));
+    // These three reached very different points, and "filled on your PC, not
+    // sent" is only true of one of them. Saying it of all three sends you
+    // looking for a filled form that was never filled.
+    foot.append(el('span', 'muted', {
+      external: 'not filled — this one is on the employer’s own site',
+      failed: 'the form could not be completed automatically',
+    }[app.status] || 'filled on your PC, not sent'));
 
-    const open = el('a', 'btn btn-sm', 'Visit job status');
+    const open = el('a', 'btn btn-sm' + (app.status === 'external' ? ' btn-primary' : ''),
+                    app.status === 'external' ? 'Apply on the employer site'
+                                              : 'Visit job status');
     open.href = app.url; open.target = '_blank'; open.rel = 'noopener';
     foot.append(open);
 

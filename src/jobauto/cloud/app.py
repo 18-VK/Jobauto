@@ -27,6 +27,20 @@ from .db import (Agent, Application, CloudJob, Task, User, init_engine,
 # overwrite one, and nothing in these states counts as pending.
 TERMINAL_STATUSES = ("submitted", "skipped")
 
+# CloudJob.state values that came from the user rather than from a search. A
+# rediscovery may refresh a job's details but must never move it out of one of
+# these: the portal goes on listing a job long after you are done with it, so
+# letting a search reset the state puts it back every single run.
+_USER_CHOSEN_STATES = ("queued", "applied", "skipped", "external")
+
+# Application statuses that mean the jobs list is finished with this job.
+# Wider than TERMINAL_STATUSES, and deliberately so: `external` is not a
+# decision you made, but there is still nothing left to do about it *there* --
+# the application has been handed to you and lives in Applications now.
+# Leaving it in Jobs shows the same job in two places, one of which cannot
+# act on it.
+_RETIRES_JOB_STATUSES = ("submitted", "skipped", "external")
+
 # Retention runs off the agent's poll rather than a scheduler, because free
 # tiers have no cron and a sleeping instance runs no background threads. The
 # throttle is in memory: a redeploy may cause one extra run, which is harmless
@@ -309,9 +323,19 @@ def create_app() -> Flask:
             if state:
                 stmt = stmt.where(CloudJob.state == state)
 
-            jobs = s.scalars(stmt).all()
             applied = {a.fingerprint for a in s.scalars(
-                select(Application).where(Application.user_id == g.user.id)).all()}
+                select(Application).where(
+                    Application.user_id == g.user.id,
+                    Application.status.in_(_RETIRES_JOB_STATUSES))).all()}
+
+            # A job you have applied to is finished with. Tagging it "applied"
+            # and leaving it in the list means the list never shrinks -- every
+            # run adds to it and nothing ever leaves, so the jobs actually
+            # worth looking at are buried under ones already dealt with.
+            if applied and not request.args.get("include_applied"):
+                stmt = stmt.where(CloudJob.fingerprint.notin_(applied))
+
+            jobs = s.scalars(stmt).all()
 
             return jsonify({"jobs": [{
                 "id": j.id,
@@ -375,6 +399,18 @@ def create_app() -> Flask:
                 return jsonify({"error": "no such application"}), 404
             item.status = statuses[action]
             item.updated_at = utcnow()
+
+            # Move the job too, not just the application. They are separate
+            # rows joined by fingerprint, and updating only one is what left
+            # a job you had finished with sitting in the jobs list, coming
+            # back after every search.
+            job = s.scalar(select(CloudJob).where(
+                CloudJob.user_id == g.user.id,
+                CloudJob.fingerprint == item.fingerprint))
+            if job is not None:
+                job.state = {"submitted": "applied", "skip": "skipped",
+                             "reopen": "new"}[action]
+
             s.commit()
             return jsonify({"ok": True, "status": item.status})
 
@@ -713,8 +749,11 @@ def create_app() -> Flask:
                     added += 1
                 else:
                     updated += 1
-                    # Never clobber a user action with a rediscovery.
-                    if job.state == "queued":
+                    # Never clobber a user action with a rediscovery. Applied
+                    # and skipped matter as much as queued here: without them
+                    # a job you had dealt with came back on the next search,
+                    # every search, because the portal still lists it.
+                    if job.state in _USER_CHOSEN_STATES:
                         row.pop("state", None)
 
                 job.portal = row.get("portal", "")[:40]
@@ -771,11 +810,17 @@ def create_app() -> Flask:
                 item.url = row.get("url", "")
                 item.resume_path = (row.get("resume_path") or "")[:300]
 
-                # A prepared application is no longer waiting in the queue.
+                # A prepared application is no longer waiting in the queue,
+                # and one handed off to an employer site is finished with in
+                # the jobs list entirely -- it lives in Applications now,
+                # where the "apply by hand" link is.
                 job = s.scalar(select(CloudJob).where(
                     CloudJob.user_id == uid, CloudJob.fingerprint == fp))
-                if job is not None and job.state == "queued":
-                    job.state = "done"
+                if job is not None:
+                    if item.status == "external":
+                        job.state = "external"
+                    elif job.state == "queued":
+                        job.state = "done"
             s.commit()
         return jsonify({"ok": True, "count": len(rows)})
 
