@@ -27,6 +27,11 @@ from ..db import Database
 from ..pipeline import Pipeline
 
 DEFAULT_INTERVAL = 30
+# How often a running task streams its output to the dashboard.
+PROGRESS_INTERVAL = 5
+# Must stay under the server's 3 minute online window, or an agent that is
+# merely backing off gets reported as offline.
+MAX_BACKOFF = 120
 
 
 class AgentError(Exception):
@@ -90,6 +95,10 @@ class CloudClient:
             return {"ok": True, "cleared": 0}
         return self._call("POST", "/api/agent/jobs/clear",
                           json={"fingerprints": fingerprints})
+
+    def task_progress(self, task_id: int, log: str, status: str = "") -> dict:
+        return self._call("POST", f"/api/agent/tasks/{task_id}/progress",
+                          json={"log": log, "status": status})
 
     def task_result(self, task_id: int, status: str, result: dict,
                     log: str = "") -> dict:
@@ -214,9 +223,23 @@ class LocalAgent:
         payload = task.get("payload") or {}
         lines: list[str] = []
 
+        task_id = task.get("id")
+        last_push = [0.0]
+
         def capture(line: str) -> None:
             lines.append(str(line))
             self.log(f"    {line}")
+
+            # Throttled: a discover emits a line per job, and one request each
+            # would hammer a free tier for no benefit.
+            now = time.monotonic()
+            if task_id and (now - last_push[0]) >= PROGRESS_INTERVAL:
+                last_push[0] = now
+                try:
+                    self.cloud.task_progress(task_id, "\n".join(lines),
+                                             status=f"{kind}: {str(line)[:80]}")
+                except Exception:
+                    pass          # progress is nice to have, never fatal
 
         pipe = Pipeline(config, db, log=capture)
         try:
@@ -379,19 +402,31 @@ class LocalAgent:
 
         backoff = self.interval
         while True:
+            status = "idle"
             try:
                 self.tick()
-                self.cloud.hello("idle")
                 backoff = self.interval
-            except AgentError as exc:
-                self.log(f"  {exc}")
-                backoff = min(backoff * 2, 600)     # cloud may be asleep
             except KeyboardInterrupt:
                 self.log("\n  agent stopped.\n")
                 return
+            except AgentError as exc:
+                self.log(f"  {exc}")
+                status = f"error: {exc}"
+                backoff = min(backoff * 2, MAX_BACKOFF)
             except Exception as exc:
                 self.log(f"  unexpected: {type(exc).__name__}: {exc}")
-                backoff = min(backoff * 2, 600)
+                status = f"error: {type(exc).__name__}: {exc}"
+                backoff = min(backoff * 2, MAX_BACKOFF)
+
+            # Heartbeat on every pass, including after a failure. Reporting
+            # only on success meant one bad cycle made a running agent look
+            # offline, which is the opposite of what you need to see: the
+            # dashboard should say "online, and here is what is wrong".
+            try:
+                self.cloud.hello(status[:255])
+            except Exception:
+                pass          # genuinely unreachable -- offline is then true
+
             # Jitter keeps many agents from hammering a free tier in lockstep.
             time.sleep(backoff + random.uniform(0, 3))
 

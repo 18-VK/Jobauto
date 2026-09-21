@@ -1088,3 +1088,97 @@ def test_a_wedged_task_eventually_gives_up_even_with_a_live_agent(client):
     task = next(t for t in client.get("/api/tasks").get_json()["tasks"]
                 if t["id"] == task_id)
     assert "never finished" in task["log"]
+
+
+# ================================================== live progress streaming
+def test_progress_is_visible_while_a_task_runs(client):
+    """The log used to arrive only with the final result, so a ten-minute run
+    showed nothing at all until it was over -- no way to tell working from
+    wedged."""
+    signup(client)
+    tok = agent_token(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    client.get("/api/agent/work", headers=H(tok))
+
+    res = client.post(f"/api/agent/tasks/{task_id}/progress", headers=H(tok),
+                      json={"log": "  Naukri\n    searching: Backend Developer",
+                            "status": "discover: searching"})
+    assert res.status_code == 200
+
+    task = next(t for t in client.get("/api/tasks").get_json()["tasks"]
+                if t["id"] == task_id)
+    assert task["status"] == "running"
+    assert "searching: Backend Developer" in task["log"]
+
+
+def test_progress_updates_replace_rather_than_append(client):
+    """The agent sends the whole accumulated log each time."""
+    signup(client)
+    tok = agent_token(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    client.get("/api/agent/work", headers=H(tok))
+
+    client.post(f"/api/agent/tasks/{task_id}/progress", headers=H(tok),
+                json={"log": "line one"})
+    client.post(f"/api/agent/tasks/{task_id}/progress", headers=H(tok),
+                json={"log": "line one\nline two"})
+
+    task = next(t for t in client.get("/api/tasks").get_json()["tasks"]
+                if t["id"] == task_id)
+    assert task["log"] == "line one\nline two"
+    assert task["log"].count("line one") == 1
+
+
+def test_progress_keeps_the_agent_marked_alive(client):
+    """A run that streams progress must not look silent to the reaper."""
+    signup(client)
+    tok = agent_token(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    client.get("/api/agent/work", headers=H(tok))
+
+    client.post(f"/api/agent/tasks/{task_id}/progress", headers=H(tok),
+                json={"log": "working", "status": "discover: Naukri"})
+
+    summary = client.get("/api/summary").get_json()
+    assert summary["any_agent_online"] is True
+    assert "discover" in summary["agents"][0]["last_status"]
+
+
+def test_progress_log_is_bounded(client):
+    """A long discover must not push an unbounded blob into the database."""
+    signup(client)
+    tok = agent_token(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    client.get("/api/agent/work", headers=H(tok))
+
+    client.post(f"/api/agent/tasks/{task_id}/progress", headers=H(tok),
+                json={"log": "x" * 100_000})
+    task = next(t for t in client.get("/api/tasks").get_json()["tasks"]
+                if t["id"] == task_id)
+    assert len(task["log"]) <= 20_000
+
+
+def test_progress_rejects_another_users_task(client, monkeypatch):
+    signup(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    client.get("/logout")
+
+    monkeypatch.setenv("JOBAUTO_ALLOW_SIGNUP", "1")
+    signup(client, email="other@x.com")
+    other = agent_token(client)
+
+    assert client.post(f"/api/agent/tasks/{task_id}/progress", headers=H(other),
+                       json={"log": "nope"}).status_code == 404
+
+
+def test_tasks_endpoint_exposes_the_log_for_the_ui(client):
+    signup(client)
+    tok = agent_token(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+    client.get("/api/agent/work", headers=H(tok))
+    client.post(f"/api/agent/tasks/{task_id}/progress", headers=H(tok),
+                json={"log": "visible"})
+
+    task = next(t for t in client.get("/api/tasks").get_json()["tasks"]
+                if t["id"] == task_id)
+    assert set(task) >= {"id", "kind", "status", "log", "claimed_at", "created_at"}

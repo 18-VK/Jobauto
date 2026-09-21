@@ -478,3 +478,12 @@ main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
 
 .task-row .state.cancelled { background: var(--surface-2); color: var(--muted); }
 .task-row .btn-sm { margin-left: 8px; }
+
+/* --------------------------------------------------------------- live log */
+#live-log { min-height: 160px; max-height: 340px; margin-bottom: 4px; }
+.task-log {
+  margin: 4px 0 10px; max-height: 260px; font-size: 12px;
+  background: var(--surface-2);
+}
+.task-row { cursor: default; }
+.task-row:hover { border-color: var(--accent); }

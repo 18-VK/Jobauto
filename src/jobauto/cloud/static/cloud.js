@@ -502,6 +502,22 @@ function tokenPanel(agent) {
   return box;
 }
 
+let liveTimer = null;
+
+function startLiveRefresh() {
+  if (liveTimer) return;
+  liveTimer = setInterval(() => {
+    if ($('#view-devices').classList.contains('is-active')) loadDevices();
+    else stopLiveRefresh();
+  }, 4000);
+}
+
+function stopLiveRefresh() {
+  if (!liveTimer) return;
+  clearInterval(liveTimer);
+  liveTimer = null;
+}
+
 async function loadDevices() {
   let d, t;
   try {
@@ -543,6 +559,28 @@ async function loadDevices() {
       `python -m jobauto agent`;
   }
 
+  const active = (t.tasks || []).find(
+    (x) => x.status === 'running' || x.status === 'queued');
+  const live = $('#live-log');
+  const note = $('#live-note');
+  if (active) {
+    const label = active.status === 'queued'
+      ? `${active.kind} is queued — waiting for your PC to pick it up`
+      : `${active.kind} is running on your PC`;
+    note.textContent = label;
+    live.hidden = !active.log;
+    if (active.log) {
+      const atBottom = live.scrollTop + live.clientHeight >= live.scrollHeight - 40;
+      live.textContent = active.log;
+      if (atBottom) live.scrollTop = live.scrollHeight;
+    }
+    startLiveRefresh();
+  } else {
+    note.textContent = 'Nothing running.';
+    live.hidden = true;
+    stopLiveRefresh();
+  }
+
   const tasks = $('#tasks');
   tasks.innerHTML = '';
   (t.tasks || []).forEach((task) => {
@@ -553,6 +591,21 @@ async function loadDevices() {
 
     // Anything unfinished can be given up on. A run whose agent stopped would
     // otherwise sit here looking active until it ages out.
+    if (task.log) {
+      row.style.cursor = 'pointer';
+      row.title = 'click to show output';
+      row.onclick = (e) => {
+        if (e.target.tagName === 'BUTTON') return;
+        const existing = row.nextElementSibling;
+        if (existing && existing.classList.contains('task-log')) {
+          existing.remove();
+          return;
+        }
+        const pre = el('pre', 'task-log log', task.log);
+        row.after(pre);
+      };
+    }
+
     if (task.status === 'running' || task.status === 'queued') {
       const stop = el('button', 'btn btn-sm', 'Cancel');
       stop.onclick = async () => {

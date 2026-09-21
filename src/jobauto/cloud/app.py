@@ -496,9 +496,10 @@ def create_app() -> Flask:
             return jsonify({"tasks": [{
                 "id": t.id, "kind": t.kind, "status": t.status,
                 "created_at": _iso(t.created_at),
+                "claimed_at": _iso(t.claimed_at),
                 "finished_at": _iso(t.finished_at),
                 "result": _json(t.result_json),
-                "log": t.log,
+                "log": t.log or "",
             } for t in tasks]})
 
     @app.post("/api/tasks/<int:task_id>/cancel")
@@ -734,6 +735,29 @@ def create_app() -> Flask:
                     job.state = "done"
             s.commit()
         return jsonify({"ok": True, "count": len(rows)})
+
+    @app.post("/api/agent/tasks/<int:task_id>/progress")
+    @auth.agent_required
+    def agent_task_progress(task_id: int):
+        """Live output while a task runs.
+
+        The log used to arrive only with the final result, so a run that takes
+        ten minutes showed nothing at all until it was over -- there was no way
+        to tell working from wedged.
+        """
+        body = request.get_json(silent=True) or {}
+        with session() as s:
+            task = s.get(Task, task_id)
+            if task is None or task.user_id != g.agent.user_id:
+                return jsonify({"error": "no such task"}), 404
+            # Keep the tail: a long discover produces more than anyone reads,
+            # and the recent lines are the interesting ones.
+            task.log = (body.get("log") or "")[-20000:]
+            if task.status == "queued":
+                task.status = "running"
+            s.commit()
+        auth.touch_agent(g.agent.id, body.get("status", "working")[:255])
+        return jsonify({"ok": True})
 
     @app.post("/api/agent/tasks/<int:task_id>/result")
     @auth.agent_required
