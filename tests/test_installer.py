@@ -199,15 +199,29 @@ def test_cli_accepts_any_token_via_equals_form(token):
     assert args.token == token
 
 
-def test_autostart_falls_back_to_the_startup_folder():
-    """Register-ScheduledTask needs elevation on many machines and fails with
-    'Access is denied'. A Startup-folder shortcut is per-user and needs none."""
+def test_autostart_is_done_for_you_rather_than_offered():
+    """An agent that only runs while a PowerShell window is open is not
+    automation. The installer used to ask, default No, and most people took
+    the default -- then wondered why the dashboard said offline."""
     script = installer.installer_script("https://x.example")
-    assert "Register-ScheduledTask" in script
-    assert "GetFolderPath('Startup')" in script
-    assert "WScript.Shell" in script
+    assert "$Exe autostart" in script
+    assert "(y/N)" not in script
+
+
+def test_autostart_falls_back_to_the_startup_folder():
+    """A managed machine can forbid the scheduler outright."""
+    script = installer.installer_script("https://x.example")
+    assert "autostart --startup-folder" in script
     # And if both routes fail, it must still say how to start it by hand.
-    assert "Start it by hand instead" in script
+    assert "$Exe agent" in script
+
+
+def test_the_task_settings_are_not_duplicated_in_powershell():
+    """They live in agent/autostart.py, which is tested and is also what
+    `jobauto autostart` uses. A second copy here drifts from it silently."""
+    script = installer.installer_script("https://x.example")
+    assert "Register-ScheduledTask" not in script
+    assert "New-ScheduledTaskSettingsSet" not in script
 
 
 def test_installer_offers_to_run_the_remaining_steps():
@@ -215,9 +229,16 @@ def test_installer_offers_to_run_the_remaining_steps():
     stop there and nothing ever runs. The installer has to offer to do them."""
     script = installer.installer_script("https://x.example")
     assert "Do this now? (Y/n)" in script
-    assert "Start it now? (Y/n)" in script
     assert "$Exe login" in script
-    assert "$Exe agent" in script
+
+
+def test_installer_does_not_end_by_blocking_on_a_foreground_agent():
+    """It used to finish by running the agent in the window, which taught
+    people that closing the window was allowed to stop it. It is a background
+    task by then, so there is nothing left to start."""
+    script = installer.installer_script("https://x.example")
+    assert "You can close this window" in script
+    assert "autostart --status" in script
 
 
 def test_installer_says_both_steps_are_required():
@@ -232,45 +253,6 @@ def test_skipping_login_warns_rather_than_going_quiet():
 
 
 # ------------------------------------- autostart robustness on a free machine
-def test_scheduled_task_restarts_the_agent_if_it_crashes():
-    """The point of preferring a task over a Startup shortcut: a shortcut runs
-    once and is gone if the process dies."""
-    script = installer.installer_script("https://x.example")
-    assert "RestartCount 5" in script
-    assert "RestartInterval" in script
-
-
-def test_scheduled_task_survives_a_laptop():
-    script = installer.installer_script("https://x.example")
-    assert "AllowStartIfOnBatteries" in script
-    assert "DontStopIfGoingOnBatteries" in script
-
-
-def test_scheduled_task_does_not_time_out():
-    """Windows stops a task after three days by default; the agent is meant to
-    run indefinitely."""
-    script = installer.installer_script("https://x.example")
-    assert "ExecutionTimeLimit" in script
-
-
-def test_scheduled_task_does_not_stack_duplicate_agents():
-    script = installer.installer_script("https://x.example")
-    assert "MultipleInstances IgnoreNew" in script
-
-
-def test_logon_start_waits_for_the_network():
-    """Polling before the network is up fails and backs off before anything
-    has had a chance to work."""
-    script = installer.installer_script("https://x.example")
-    assert "Delay = 'PT1M'" in script
-
-
-def test_autostart_still_falls_back_where_tasks_need_admin():
-    script = installer.installer_script("https://x.example")
-    assert "GetFolderPath('Startup')" in script
-    assert "Start it by hand instead" in script
-
-
 def test_installer_points_at_the_daily_schedule():
     """Otherwise people build their own Task Scheduler entries for discover and
     apply, which the schedule already does."""

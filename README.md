@@ -260,10 +260,22 @@ Then, on that machine:
 
 ```powershell
 jobauto login      # sign in to each portal by hand, once
-jobauto agent      # start syncing — leave it running
 ```
 
-The dot in the dashboard header turns green.
+That is the last thing you type. The installer already registered the agent as
+a Windows scheduled task, so it is running in the background and you can close
+the window. The dot in the dashboard header turns green.
+
+If you skipped that, or it ever stops:
+
+```powershell
+jobauto autostart            # register it and start it now
+jobauto autostart --status   # is it set up, is it running, is the schedule on?
+```
+
+The task starts the agent at logon **and re-checks every 15 minutes**, so an
+agent that crashes, is killed, or was never started comes back on its own
+rather than waiting for the next reboot.
 
 **Setup B is done.** Open your URL from anywhere.
 
@@ -516,7 +528,9 @@ tasks still running.
 | `jobauto stats` | Application history summary |
 | `jobauto web` | Local dashboard on `127.0.0.1:5057` |
 | `jobauto link --url U --token T` | Link this PC to your deployment |
-| `jobauto agent` | Run the sync agent — keep it running |
+| `jobauto agent` | Run the sync agent in this window |
+| `jobauto autostart` | Keep the agent running via Task Scheduler |
+| `jobauto autostart --status` | Why is the dashboard showing offline? |
 | `jobauto cloud` | Run the hosted app locally, to try it |
 | `jobauto export-session` | Copy your portal logins to another machine |
 | `jobauto import-session --file F` | Restore logins exported elsewhere |

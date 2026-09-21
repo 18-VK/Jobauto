@@ -239,65 +239,23 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # -------------------------------------------------------------- autostart
+# Not a question any more. An agent that only runs while a PowerShell window
+# is open is not automation -- close the window, the dashboard goes offline,
+# and the daily schedule silently stops firing. `jobauto autostart` registers
+# the scheduled task that keeps it alive, including a heartbeat that restarts
+# it if it ever stops. The logic lives in Python so it is one implementation
+# with tests, rather than a second copy here that drifts.
 Write-Host ''
-$auto = Read-Host '  Start the agent automatically when you log in? (y/N)'
-if ($auto -match '^[Yy]') {
-    $registered = $false
-
-    # Preferred where it is allowed: unlike a Startup shortcut, a scheduled
-    # task restarts the agent if it crashes and survives a machine that stays
-    # on for weeks. Needs elevation on managed machines and fails with
-    # "Access is denied" without it.
-    try {
-        $action  = New-ScheduledTaskAction -Execute $Exe -Argument 'agent'
-        # A short delay lets the network come up first, so the first poll does
-        # not fail and back off before anything has had a chance to work.
-        $trigger = New-ScheduledTaskTrigger -AtLogOn
-        $trigger.Delay = 'PT1M'
-
-        $settings = New-ScheduledTaskSettingsSet `
-            -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-            -StartWhenAvailable -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 5) `
-            -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
-            -MultipleInstances IgnoreNew
-
-        Register-ScheduledTask -TaskName 'jobauto-agent' -Action $action `
-            -Trigger $trigger -Settings $settings -Force `
-            -Description 'jobauto cloud sync agent' | Out-Null
-
-        Write-Host '  registered as a scheduled task.' -ForegroundColor Green
-        Write-Host '    starts a minute after you log in, restarts if it crashes,' -ForegroundColor DarkGray
-        Write-Host '    and never times out.' -ForegroundColor DarkGray
-        Write-Host '    remove it with:  Unregister-ScheduledTask jobauto-agent' -ForegroundColor DarkGray
-        $registered = $true
-    } catch {
-        Write-Host '  the task scheduler refused (needs admin on managed machines).' -ForegroundColor DarkGray
-    }
-
-    # A shortcut in the Startup folder is per-user and needs no privileges, so
-    # it works where the scheduler does not.
-    if (-not $registered) {
-        try {
-            $startup = [Environment]::GetFolderPath('Startup')
-            $link = Join-Path $startup 'jobauto-agent.lnk'
-            $shell = New-Object -ComObject WScript.Shell
-            $shortcut = $shell.CreateShortcut($link)
-            $shortcut.TargetPath = $Exe
-            $shortcut.Arguments = 'agent'
-            $shortcut.WorkingDirectory = $Home_
-            $shortcut.Description = 'jobauto cloud sync agent'
-            $shortcut.WindowStyle = 7          # start minimised
-            $shortcut.Save()
-            Write-Host '  added to your Startup folder -- starts at every login.' -ForegroundColor Green
-            Write-Host "  remove it any time: $link" -ForegroundColor DarkGray
-            $registered = $true
-        } catch {
-            Write-Host "  could not set up autostart: $_" -ForegroundColor Yellow
-        }
-    }
-
-    if (-not $registered) {
-        Write-Host '  Start it by hand instead:' -ForegroundColor DarkGray
+Write-Host '  setting it to run by itself ...' -ForegroundColor White
+& $Exe autostart
+if ($LASTEXITCODE -ne 0) {
+    # A managed machine can forbid the scheduler outright. The Startup folder
+    # is per-user and needs no privileges, so it still gets something -- and
+    # the command says plainly that it is the weaker option.
+    Write-Host '  the task scheduler refused; falling back to the Startup folder.' -ForegroundColor Yellow
+    & $Exe autostart --startup-folder
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '  autostart could not be set up. Start it by hand each time:' -ForegroundColor Yellow
         Write-Host "    $Exe agent" -ForegroundColor DarkGray
     }
 }
@@ -333,38 +291,30 @@ if ($doLogin -notmatch '^[Nn]') {
 }
 
 # ----------------------------------------------------------------- agent
+# The agent is already running as a scheduled task by this point, so there is
+# nothing to start. Say so -- the previous version ended by running it in this
+# window, which taught people that closing the window was allowed to stop it.
 Write-Host ''
-Write-Host '  2. Start the agent.' -ForegroundColor White
-Write-Host '     It polls your site for work and does the searching and'
-Write-Host '     form filling. Leave it running; close it whenever you like.'
-Write-Host ''
-$doAgent = Read-Host '     Start it now? (Y/n)'
-
-Write-Host ''
-Write-Host '  Everything lives in ~/.jobauto -- delete that folder to remove it all.' -ForegroundColor DarkGray
-Write-Host "  Dashboard: $Base" -ForegroundColor DarkGray
-Write-Host ''
-
-Write-Host '  3. Optional: have it run by itself, once a day.' -ForegroundColor White
+Write-Host '  2. Turn on the daily run.' -ForegroundColor White
 Write-Host '     Open the dashboard, go to Preferences, and switch on'
 Write-Host '     "Run automatically". It searches the portals at the time you'
 Write-Host '     pick, then fills applications in batches -- still leaving every'
 Write-Host '     one for you to review and submit.'
 Write-Host "       $Base" -ForegroundColor Cyan
 Write-Host ''
-
-if ($doAgent -notmatch '^[Nn]') {
-    Write-Host '  Starting the agent. Ctrl-C to stop it.' -ForegroundColor Green
-    Write-Host '  Watch progress at ' -NoNewline -ForegroundColor DarkGray
-    Write-Host "$Base" -ForegroundColor Cyan
-    Write-Host ''
-    # Runs in this window so its output is visible. This is the last step, so
-    # blocking here is what the user wants.
-    & $Exe agent
-    Finish 0
-}
-
-Write-Host '  Start it when you are ready:' -ForegroundColor DarkGray
-Write-Host "    $Exe agent" -ForegroundColor Cyan
+Write-Host '  ------------------------------------------------------------' -ForegroundColor DarkGray
+Write-Host '  The agent runs in the background from now on.' -ForegroundColor Green
+Write-Host '  You can close this window. It starts again when you log in,' -ForegroundColor Green
+Write-Host '  and restarts itself if it ever stops.' -ForegroundColor Green
+Write-Host '  ------------------------------------------------------------' -ForegroundColor DarkGray
+Write-Host ''
+Write-Host '  check on it:   ' -NoNewline -ForegroundColor DarkGray
+Write-Host "$Exe autostart --status" -ForegroundColor Cyan
+Write-Host '  turn it off:   ' -NoNewline -ForegroundColor DarkGray
+Write-Host "$Exe autostart --remove" -ForegroundColor Cyan
+Write-Host '  watch it work: ' -NoNewline -ForegroundColor DarkGray
+Write-Host "$Base" -ForegroundColor Cyan
+Write-Host ''
+Write-Host '  Everything lives in ~/.jobauto -- delete that folder to remove it all.' -ForegroundColor DarkGray
 Finish 0
 """

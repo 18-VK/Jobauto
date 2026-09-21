@@ -60,13 +60,18 @@ itself:
 5. **Verifies your token** against the API, so a bad one gives a plain sentence
    rather than a stack trace
 6. **Links the machine**, saving the URL and token to `~\.jobauto\data\agent.json`
-7. **Sets up autostart**, preferring a scheduled task:
+7. **Sets up autostart** as a scheduled task -- not offered, just done,
+   because an agent that only runs while a PowerShell window is open is not
+   automation:
    - starts a minute after you log in, so the network is up first
-   - restarts up to 5 times if it crashes
-   - never times out, and keeps running on battery
-   - falls back to a Startup-folder shortcut where tasks need admin
+   - **re-checks every 15 minutes**, so an agent that stopped for any reason
+     comes back without waiting for a reboot
+   - restarts if it crashes, never times out, keeps running on battery
+   - falls back to a Startup-folder entry where tasks need admin
 8. **Signs you in to the portals**, one real browser at a time
-9. **Starts the agent**
+
+The agent is running in the background by the time it finishes. There is
+nothing left to start, and closing the window does not stop it.
 
 ---
 

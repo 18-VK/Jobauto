@@ -384,6 +384,87 @@ def cmd_link(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_schedule_state() -> None:
+    """What the cloud says about the daily run, best effort.
+
+    Read-only and failure-tolerant on purpose: this is a footnote to a local
+    status command, and an unreachable site should not turn it into an error.
+    """
+    try:
+        from .agent.runner import CloudClient, load_agent_config
+        url, token = load_agent_config()
+        prefs = CloudClient(url, token).preferences() or {}
+    except Exception as exc:
+        print(f"\n  daily run: could not ask the site ({type(exc).__name__})")
+        return
+
+    import yaml as _yaml
+    try:
+        parsed = _yaml.safe_load(prefs.get("yaml") or "") or {}
+    except Exception:
+        parsed = {}
+    sched = parsed.get("schedule") or {}
+
+    if not sched.get("enabled"):
+        print("\n  daily run: OFF -- the agent is up but has nothing to do.")
+        print("    turn it on in the dashboard: Preferences -> Run automatically")
+        return
+    days = ", ".join(sched.get("days") or []) or "every day"
+    print(f"\n  daily run: ON at {sched.get('time', '09:00')} "
+          f"{sched.get('timezone', '')} ({days})")
+    print(f"    discover, then apply in batches of "
+          f"{sched.get('batch_size', 5)}, up to "
+          f"{sched.get('max_batches', 4)} batches")
+
+
+def cmd_autostart(args: argparse.Namespace) -> int:
+    """Keep the agent running, so the dashboard stops saying offline."""
+    from .agent import autostart as auto
+
+    if args.status:
+        st = auto.status()
+        if not st.registered:
+            print(f"\n  autostart: not set up -- {st.detail}\n")
+            return 1
+        mark = "running" if st.running else "NOT running"
+        print(f"\n  autostart: registered, {mark}")
+        for label, value in (("last run", st.last_run),
+                             ("next check", st.next_run)):
+            if value:
+                print(f"    {label:<12} {value}")
+        if st.last_result:
+            meaning = auto.explain_result(st.last_result)
+            print(f"    {'last result':<12} {st.last_result}"
+                  + (f"  -- {meaning}" if meaning else ""))
+        if not st.running:
+            # The heartbeat trigger will pick it up, but someone standing at
+            # the machine now should not have to wait a quarter of an hour to
+            # find out whether any of this works.
+            print(f"\n  it restarts within {auto.HEARTBEAT_MINUTES} minutes "
+                  f"on its own, or immediately with:")
+            print("    schtasks /Run /TN jobauto-agent")
+
+        # A running agent and a disabled schedule look identical from here --
+        # both are "nothing happens all day" -- so answer the whole question
+        # rather than the half this command is named after.
+        _print_schedule_state()
+        print()
+        return 0 if st.healthy else 1
+
+    try:
+        if args.remove:
+            message = auto.remove()
+        elif args.startup_folder:
+            message = auto.install_startup_shortcut()
+        else:
+            message = auto.register()
+    except auto.AutostartError as exc:
+        print(f"\n  {exc}\n", file=sys.stderr)
+        return 2
+    print(f"\n  {message}\n")
+    return 0
+
+
 def cmd_agent(args: argparse.Namespace) -> int:
     from .agent import AgentError, CloudClient, LocalAgent, load_agent_config
 
@@ -511,6 +592,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--url", required=True, help="https://your-app.onrender.com")
     sp.add_argument("--token", required=True, help="agent token from the Devices tab")
     sp.set_defaults(func=cmd_link)
+
+    sp = sub.add_parser("autostart",
+                        help="keep the agent running via Task Scheduler")
+    sp.add_argument("--status", action="store_true",
+                    help="is it set up, and is it actually running?")
+    sp.add_argument("--remove", action="store_true", help="undo it")
+    sp.add_argument("--startup-folder", action="store_true",
+                    help="fallback for machines that forbid the scheduler")
+    sp.set_defaults(func=cmd_autostart)
 
     sp = sub.add_parser("agent", help="run the sync agent (keep this running)")
     sp.add_argument("--interval", type=int, default=30, help="poll seconds")

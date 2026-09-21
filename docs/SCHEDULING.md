@@ -238,3 +238,66 @@ timezone offset and an excluded weekday are all ordinary assertions.
 The chain tests drive the real endpoints: queue, claim via `/api/agent/work`,
 report via `/api/agent/tasks/<id>/result`, and assert what the next poll hands
 back. That covers the wiring, not just the pure functions.
+
+---
+
+## Keeping the agent alive
+
+Everything above depends on one thing: **the agent is running**. It is the
+clock. If it stops, the dashboard says offline and the daily run silently never
+fires — which looks identical to the whole thing being broken.
+
+So autostart is not a preference. `jobauto autostart` registers one Windows
+scheduled task with two triggers:
+
+| Trigger | Covers |
+|---|---|
+| At logon, delayed 1 minute | a fresh session, with the network up first |
+| Every 15 minutes, forever | an agent that stopped for any other reason |
+
+The second one is the important half, and it only works because of
+`MultipleInstancesPolicy = IgnoreNew`. The heartbeat fires whether or not the
+agent is up; when it is, Windows discards the new instance and nothing happens.
+When it is not — crashed, killed by a policy sweep, never started, machine
+logged in for three weeks — that same trigger is what brings it back.
+
+Neither setting does this alone. `RestartOnFailure` only covers a process that
+exits non-zero, and a logon trigger only covers logging on. The pair of them is
+what makes it self-healing.
+
+```bash
+jobauto autostart            # set it up and start it now
+jobauto autostart --status   # registered? running? is the schedule even on?
+jobauto autostart --remove   # stop it starting itself
+```
+
+`--status` answers the whole question rather than the half it is named after: a
+running agent with the schedule switched off looks exactly like a stopped agent
+from the outside — both are "nothing happens all day".
+
+### Why registering can be refused
+
+`register()` will not create a task whose command cannot start. The usual case
+is a source checkout, where `python -m jobauto` works only with `PYTHONPATH`
+set — which a scheduled task does not inherit. A task that fails every fifteen
+minutes is worse than no task at all: the dashboard says offline, and the only
+evidence is a "Last Result" number in a UI nobody opens.
+
+That number is translated for you:
+
+| Last Result | Means |
+|---|---|
+| `0` | exited cleanly — it stopped rather than crashed |
+| `1` | jobauto is not installed in the Python the task runs |
+| `2` | this PC is not linked to your dashboard |
+| `267009` | running now |
+| `267011` | has not run yet |
+
+### What still is not automatic
+
+**Submitting.** The schedule runs discover, then fills applications in batches,
+and stops. Every one waits for you to review and send — see the review gate in
+[RISKS.md](RISKS.md). That is the design, not a missing feature.
+
+**Signing in to the portals.** Once per portal, by hand, in a real browser. No
+password is ever stored, so there is nothing to automate.
