@@ -456,6 +456,7 @@ async function loadDevices() {
   try {
     d = await api('/api/agents');
     t = await api('/api/tasks');
+    loadRetention();
   } catch { return; }
 
   const wrap = $('#devices');
@@ -496,6 +497,54 @@ async function loadDevices() {
     tasks.append(row);
   });
 }
+
+async function loadRetention() {
+  let d;
+  try { d = await api('/api/retention'); } catch { return; }
+
+  const wrap = $('#retention');
+  wrap.innerHTML = '';
+  const card = el('div', 'card');
+
+  const pending = Object.entries(d.would_delete || {});
+  if (pending.length) {
+    card.append(el('div', 'meta', 'next cleanup will remove:'));
+    const tags = el('div', 'tagrow');
+    pending.forEach(([what, n]) => tags.append(el('span', 'tag warn', `${n} ${what}`)));
+    card.append(tags);
+  } else {
+    card.append(el('div', 'meta', 'nothing old enough to remove'));
+  }
+
+  const kept = Object.entries(d.protected || {});
+  if (kept.length) {
+    const tags = el('div', 'tagrow');
+    kept.forEach(([what, n]) => tags.append(el('span', 'tag good', `keeping ${n} ${what}`)));
+    card.append(tags);
+  }
+
+  const s = d.settings || {};
+  const windows = [
+    ['unapplied jobs', s.jobs_days], ['applied job rows', s.applied_jobs_days],
+    ['finished tasks', s.tasks_days], ['applications', s.applications_days],
+  ].map(([label, days]) => `${label}: ${days ? days + 'd' : 'kept forever'}`);
+  card.append(el('div', 'meta', windows.join('  ·  ')));
+  card.append(el('div', 'meta',
+    `runs automatically every ${d.every_hours}h` +
+    (d.last_run ? ` · last run ${ago(d.last_run)}` : ' · not run yet this session')));
+
+  wrap.append(card);
+}
+
+$('#btn-purge').onclick = async () => {
+  const btn = $('#btn-purge');
+  btn.disabled = true;
+  try {
+    const r = await api('/api/retention/purge', { method: 'POST' });
+    alert(r.total ? r.summary : 'Nothing old enough to remove.');
+    loadRetention(); loadSummary(); loadJobs();
+  } catch (e) { alert(e.message); } finally { btn.disabled = false; }
+};
 
 $('#btn-copy').onclick = async () => {
   try {

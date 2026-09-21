@@ -27,6 +27,30 @@ from .db import (Agent, Application, CloudJob, Task, User, init_engine,
 # overwrite one, and nothing in these states counts as pending.
 TERMINAL_STATUSES = ("submitted", "skipped")
 
+# Retention runs off the agent's poll rather than a scheduler, because free
+# tiers have no cron and a sleeping instance runs no background threads. The
+# throttle is in memory: a redeploy may cause one extra run, which is harmless
+# because purging is idempotent, and it needs no schema change on an existing
+# deployment.
+_PURGE_INTERVAL_HOURS = 12
+_last_purge: dict[int, datetime] = {}
+
+
+def maybe_purge(user_id: int) -> None:
+    from . import retention
+
+    now = datetime.now(timezone.utc)
+    previous = _last_purge.get(user_id)
+    if previous and (now - previous) < timedelta(hours=_PURGE_INTERVAL_HOURS):
+        return
+    _last_purge[user_id] = now
+    try:
+        retention.purge_user(user_id)
+    except Exception:
+        # Housekeeping must never take the request down with it.
+        import logging
+        logging.getLogger("jobauto.retention").exception("purge failed")
+
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -302,6 +326,41 @@ def create_app() -> Flask:
             s.commit()
             return jsonify({"ok": True, "status": item.status})
 
+    # ------------------------------------------------------ retention
+    @app.get("/api/retention")
+    @auth.login_required
+    def api_retention():
+        """What the next cleanup would remove, without removing it."""
+        from . import retention
+
+        with session() as s:
+            user = s.get(User, g.user.id)
+            settings = retention.settings_for(user)
+
+        preview = retention.purge_user(g.user.id, dry_run=True)
+        last = _last_purge.get(g.user.id)
+        return jsonify({
+            "settings": settings,
+            "defaults": retention.DEFAULTS,
+            "would_delete": {k: v for k, v in preview.deleted.items() if v},
+            "protected": preview.kept,
+            "total": preview.total,
+            "last_run": _iso(last) if last else None,
+            "every_hours": _PURGE_INTERVAL_HOURS,
+        })
+
+    @app.post("/api/retention/purge")
+    @auth.login_required
+    def api_retention_purge():
+        from . import retention
+
+        report = retention.purge_user(g.user.id)
+        _last_purge[g.user.id] = datetime.now(timezone.utc)
+        return jsonify({"ok": True,
+                        "deleted": {k: v for k, v in report.deleted.items() if v},
+                        "total": report.total,
+                        "summary": report.summary()})
+
     @app.get("/api/preferences")
     @auth.login_required
     def api_get_prefs():
@@ -465,6 +524,7 @@ def create_app() -> Flask:
     def agent_work():
         """One poll: claims the oldest queued task and reports queued jobs."""
         auth.touch_agent(g.agent.id, "polling")
+        maybe_purge(g.agent.user_id)
         with session() as s:
             uid = g.agent.user_id
             _reap_stale_tasks(s, uid)

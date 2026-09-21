@@ -198,6 +198,44 @@ be sure that is what you want.
 was not actually updated, or the deploy did not restart. Check the Render logs
 for the boot line and confirm the variable in the Environment tab.
 
+## Automatic cleanup
+
+The database prunes itself so a free tier stays comfortable. Cleanup runs at
+most twice a day, triggered by the agent's poll — free tiers have no cron, and
+a sleeping instance runs no background threads, so hanging it off the poll is
+what actually works.
+
+Windows live in the `retention:` block of your preferences, and `0` on any of
+them means keep forever:
+
+```yaml
+retention:
+  enabled: true
+  jobs_days: 7            # discovered jobs you never acted on
+  applied_jobs_days: 7    # job rows for applications already recorded
+  tasks_days: 7           # finished run history and its logs
+  applications_days: 0    # your application history -- kept by default
+  password_resets_days: 1
+```
+
+**Three things are never removed at any age**, because losing them costs work
+rather than saving space:
+
+- applications still `prepared` — filled in and waiting for *you* to submit
+- jobs still queued to apply
+- tasks still queued or running
+
+Deleting an applied job row is safe because the application row carries the
+title, company and url forward, so the history survives.
+
+**Devices → Database cleanup** shows what the next run will remove, what is
+being protected, and a **Clean up now** button. On a realistic database — 147
+jobs, 41 tasks — cleanup took it from 278 KB to 94 KB.
+
+> **On Postgres**, deleted rows are reclaimed by autovacuum rather than handed
+> straight back to the operating system, so the reported database size may lag
+> behind. Supabase runs autovacuum for you; nothing to do.
+
 ## Other hosts
 
 The same script works for any pair of SQLAlchemy URLs. Neon, Railway Postgres

@@ -141,3 +141,36 @@ notifications:
   digest_time: "09:00"
   # Only notify for jobs at/above this score.
   min_score: 70
+
+# ----------------------------------------------------------------------------
+# RETENTION  --  automatic cleanup, to keep a free-tier database small
+# ----------------------------------------------------------------------------
+# Runs at most twice a day, triggered by the agent's poll. Any window set to 0
+# means "keep forever".
+#
+# Three things are never purged at any age, because losing them loses work
+# rather than saving space:
+#   - applications still `prepared` (filled in, waiting for YOU to submit)
+#   - jobs still queued to apply
+#   - tasks still queued or running
+# ----------------------------------------------------------------------------
+retention:
+  enabled: true
+
+  # Discovered jobs you never acted on. The biggest consumer of space: every
+  # run adds rows, and a listing older than this is stale anyway.
+  jobs_days: 7
+
+  # Job rows for applications already recorded. Safe to drop -- the application
+  # row keeps the title, company and url, so the history survives.
+  applied_jobs_days: 7
+
+  # Finished run history. Each task stores its whole log, so these add up.
+  tasks_days: 7
+
+  # Your record of where you applied. 0 keeps it forever, which is the default:
+  # it is a handful of rows, and it is the answer to "did I already apply here?"
+  applications_days: 0
+
+  # Expired reset tokens are useless the moment they expire.
+  password_resets_days: 1
