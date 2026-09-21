@@ -287,6 +287,28 @@ class Database:
                 ORDER BY updated_at DESC LIMIT 1""", (fingerprint,)).fetchone()
         return row["status"] if row else None
 
+    def settle_application(self, fingerprint: str, status: str,
+                           portal: str = "") -> int:
+        """Record an outcome the user chose elsewhere (the cloud dashboard).
+
+        Only moves rows that are still 'prepared', so a decision can never
+        undo an outcome this machine already recorded. Returns rows changed.
+        """
+        now = datetime.now().isoformat(timespec="seconds")
+        sql = ["UPDATE applications SET status = ?, updated_at = ?"]
+        args: list[Any] = [status, now]
+        if status == "submitted":
+            sql.append(", submitted_at = COALESCE(submitted_at, ?)")
+            args.append(now)
+        sql.append(" WHERE fingerprint = ? AND status = 'prepared'")
+        args.append(fingerprint)
+        if portal:
+            sql.append(" AND portal = ?")
+            args.append(portal)
+
+        with self.tx() as c:
+            return int(c.execute("".join(sql), args).rowcount)
+
     def companies_applied_since(self, days: int) -> set[str]:
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
         rows = self._conn.execute(

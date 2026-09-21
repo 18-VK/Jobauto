@@ -159,28 +159,48 @@ function jobCard(job) {
 }
 
 /* ------------------------------------------------------- applications */
+/* Anything you have decided on is finished and must not reappear as pending. */
+const DONE_STATUSES = ['submitted', 'skipped'];
+
 async function loadApps() {
   let d;
   try { d = await api('/api/applications'); } catch { return; }
 
+  const pending = d.applications.filter((a) => !DONE_STATUSES.includes(a.status));
+  const done = d.applications.filter((a) => DONE_STATUSES.includes(a.status));
+
   const wrap = $('#apps');
   wrap.innerHTML = '';
-  $('#apps-empty').hidden = d.applications.length > 0;
+  $('#apps-empty').hidden = pending.length > 0;
+  $('#c-apps-pending').textContent = pending.length;
+  pending.forEach((app) => wrap.append(appCard(app)));
 
-  d.applications.forEach((app) => {
-    const card = el('div', 'card');
+  const doneWrap = $('#apps-done');
+  doneWrap.innerHTML = '';
+  $('#c-apps-done').textContent = done.length;
+  $('#apps-done-empty').hidden = done.length > 0 || doneWrap.hidden;
+  done.forEach((app) => doneWrap.append(appCard(app)));
+}
 
-    const h = el('h3');
-    const a = el('a', null, app.title);
-    a.href = app.url; a.target = '_blank'; a.rel = 'noopener';
-    h.append(a);
-    card.append(h, el('div', 'meta', `${app.company} · ${app.portal}`));
+function appCard(app) {
+  const card = el('div', 'card');
+  const isDone = DONE_STATUSES.includes(app.status);
+  if (isDone) card.classList.add('is-done');
 
-    const tags = el('div', 'tagrow');
-    const cls = { submitted: 'tag good', prepared: 'tag tagq', skipped: 'tag' }[app.status] || 'tag';
-    tags.append(el('span', cls, app.status));
-    card.append(tags);
+  const h = el('h3');
+  const a = el('a', null, app.title);
+  a.href = app.url; a.target = '_blank'; a.rel = 'noopener';
+  h.append(a);
+  card.append(h, el('div', 'meta', `${app.company} · ${app.portal}`));
 
+  const tags = el('div', 'tagrow');
+  const cls = { submitted: 'tag good', prepared: 'tag tagq', skipped: 'tag' }[app.status] || 'tag';
+  tags.append(el('span', cls, app.status));
+  if (app.updated_at) tags.append(el('span', 'tag', ago(app.updated_at)));
+  card.append(tags);
+
+  // A finished application does not need its answers re-read every time.
+  if (!isDone) {
     if (Object.keys(app.answered || {}).length) {
       const dl = el('dl', 'qblock');
       Object.entries(app.answered).forEach(([q, ans]) => {
@@ -195,30 +215,48 @@ async function loadApps() {
       app.escalated.forEach((q) => dl.append(el('dd', null, q)));
       card.append(dl);
     }
+  }
 
-    if (app.status === 'prepared') {
-      const foot = el('div', 'card-foot');
-      foot.append(el('span', 'muted', 'filled on your PC, not sent'));
+  const foot = el('div', 'card-foot');
+  if (isDone) {
+    foot.append(el('span', 'muted',
+      app.status === 'submitted' ? 'you marked this submitted' : 'you skipped this'));
+    const open = el('a', 'btn btn-sm', 'Open listing');
+    open.href = app.url; open.target = '_blank'; open.rel = 'noopener';
+    foot.append(open);
 
-      const open = el('a', 'btn btn-sm', 'Visit job status');
-      open.href = app.url; open.target = '_blank'; open.rel = 'noopener';
-      foot.append(open);
+    // Reversible, because "Skip" is easy to hit by accident.
+    const undo = el('button', 'btn btn-sm', 'Move back to pending');
+    undo.onclick = async () => {
+      undo.disabled = true;
+      try {
+        await api(`/api/applications/${app.id}/reopen`, { method: 'POST' });
+        loadApps(); loadSummary();
+      } catch (e) { alert(e.message); undo.disabled = false; }
+    };
+    foot.append(undo);
+  } else {
+    foot.append(el('span', 'muted', 'filled on your PC, not sent'));
 
-      ['submitted', 'skip'].forEach((action) => {
-        const b = el('button', 'btn btn-sm' + (action === 'submitted' ? ' btn-primary' : ''),
-                     action === 'submitted' ? 'Mark submitted' : 'Skip');
-        b.onclick = async () => {
-          b.disabled = true;
+    const open = el('a', 'btn btn-sm', 'Visit job status');
+    open.href = app.url; open.target = '_blank'; open.rel = 'noopener';
+    foot.append(open);
+
+    ['submitted', 'skip'].forEach((action) => {
+      const b = el('button', 'btn btn-sm' + (action === 'submitted' ? ' btn-primary' : ''),
+                   action === 'submitted' ? 'Mark submitted' : 'Skip');
+      b.onclick = async () => {
+        b.disabled = true;
+        try {
           await api(`/api/applications/${app.id}/${action}`, { method: 'POST' });
           loadApps(); loadSummary();
-        };
-        foot.append(b);
-      });
-      card.append(foot);
-    }
-
-    wrap.append(card);
-  });
+        } catch (e) { alert(e.message); b.disabled = false; }
+      };
+      foot.append(b);
+    });
+  }
+  card.append(foot);
+  return card;
 }
 
 /* -------------------------------------------------------- preferences */
@@ -486,6 +524,13 @@ async function queueTask(kind, payload) {
 
 $('#btn-discover').onclick = () => queueTask('discover', {});
 $('#btn-apply').onclick = () => queueTask('apply', { limit: 5 });
+$('#btn-toggle-done').onclick = () => {
+  const wrap = $('#apps-done');
+  wrap.hidden = !wrap.hidden;
+  $('#btn-toggle-done').textContent = wrap.hidden ? 'show' : 'hide';
+  $('#apps-done-empty').hidden = wrap.hidden || wrap.children.length > 0;
+};
+
 $('#f-min').addEventListener('change', loadJobs);
 $('#f-portal').addEventListener('change', loadJobs);
 

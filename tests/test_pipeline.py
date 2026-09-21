@@ -716,3 +716,30 @@ def test_a_redirect_is_reported_with_where_we_landed(config):
     note = a.why_no_results()
     assert "https://x/login" in note
     assert "Sign in" in note
+
+
+# ---------------------------------------- settling cloud decisions locally
+def test_settle_application_marks_a_prepared_row(db):
+    job = Job(portal="naukri", portal_job_id="1", title="Backend Developer",
+              company="Acme", url="https://x/1", location="Noida")
+    db.record_application(job, AppStatus.PREPARED)
+    assert len(db.pending_review()) == 1
+
+    changed = db.settle_application(job.fingerprint, "submitted", "naukri")
+    assert changed == 1
+    assert db.pending_review() == []
+    assert db.application_status(job.fingerprint) == "submitted"
+
+
+def test_settle_application_never_overwrites_a_real_outcome(db):
+    """This machine is authoritative for what it actually did."""
+    job = Job(portal="naukri", portal_job_id="1", title="Backend Developer",
+              company="Acme", url="https://x/1")
+    db.record_application(job, AppStatus.SUBMITTED)
+
+    assert db.settle_application(job.fingerprint, "skipped", "naukri") == 0
+    assert db.application_status(job.fingerprint) == "submitted"
+
+
+def test_settle_application_ignores_unknown_fingerprints(db):
+    assert db.settle_application("nosuchfingerprint", "submitted") == 0

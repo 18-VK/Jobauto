@@ -23,6 +23,10 @@ from . import auth
 from .db import (Agent, Application, CloudJob, Task, User, init_engine,
                  session, utcnow)
 
+# Outcomes the user chose in the browser. Nothing the agent pushes may
+# overwrite one, and nothing in these states counts as pending.
+TERMINAL_STATUSES = ("submitted", "skipped")
+
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -285,13 +289,16 @@ def create_app() -> Flask:
     @auth.login_required
     def api_application_action(app_id: int, action: str):
         """You confirming you sent it. The cloud never submits anything."""
-        if action not in ("submitted", "skip"):
+        statuses = {"submitted": "submitted", "skip": "skipped",
+                    "reopen": "prepared"}
+        if action not in statuses:
             return jsonify({"error": "unknown action"}), 400
         with session() as s:
             item = s.get(Application, app_id)
             if item is None or item.user_id != g.user.id:
                 return jsonify({"error": "no such application"}), 404
-            item.status = "submitted" if action == "submitted" else "skipped"
+            item.status = statuses[action]
+            item.updated_at = utcnow()
             s.commit()
             return jsonify({"ok": True, "status": item.status})
 
@@ -481,6 +488,19 @@ def create_app() -> Flask:
                 "fingerprint": j.fingerprint, "url": j.url,
                 "portal": j.portal, "title": j.title, "company": j.company,
             } for j in queued]
+
+            # Decisions made in the browser, so the agent can settle them in
+            # its own database. Without this the agent keeps re-pushing them
+            # as 'prepared' forever, and `jobauto review` on the PC still lists
+            # applications the user already dealt with in the dashboard.
+            decided = s.scalars(select(Application).where(
+                Application.user_id == uid,
+                Application.status.in_(TERMINAL_STATUSES))).all()
+            payload["decided"] = [{
+                "fingerprint": a.fingerprint,
+                "portal": a.portal,
+                "status": a.status,
+            } for a in decided]
             return jsonify(payload)
 
     @app.post("/api/agent/jobs/clear")
@@ -566,16 +586,27 @@ def create_app() -> Flask:
                 if item is None:
                     item = Application(user_id=uid, fingerprint=fp)
                     s.add(item)
+
+                # A decision you made in the browser is final. The agent
+                # re-pushes everything still 'prepared' in its local database
+                # on every poll, and it has no way to know you already marked
+                # this submitted or skipped -- so without this guard your
+                # choice got overwritten within about thirty seconds and the
+                # application reappeared as pending.
+                decided = item.status in TERMINAL_STATUSES
+                if not decided:
+                    item.status = row.get("status", "prepared")[:20]
+                    item.answered_json = json.dumps(row.get("answered") or {})
+                    item.escalated_json = json.dumps(row.get("escalated") or [])
+                    item.note = row.get("note", "")
+                    item.updated_at = utcnow()
+
+                # Descriptive fields are safe to refresh either way.
                 item.portal = row.get("portal", "")[:40]
                 item.title = row.get("title", "")[:300]
                 item.company = row.get("company", "")[:200]
                 item.url = row.get("url", "")
-                item.status = row.get("status", "prepared")[:20]
-                item.answered_json = json.dumps(row.get("answered") or {})
-                item.escalated_json = json.dumps(row.get("escalated") or [])
                 item.resume_path = (row.get("resume_path") or "")[:300]
-                item.note = row.get("note", "")
-                item.updated_at = utcnow()
 
                 # A prepared application is no longer waiting in the queue.
                 job = s.scalar(select(CloudJob).where(

@@ -437,3 +437,10 @@ main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
   background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
 }
 .auth-alt code { font-family: var(--mono); font-size: 12px; }
+
+/* -------------------------------------------------- completed applications */
+.card.is-done { opacity: .72; }
+.card.is-done:hover { opacity: 1; }
+.card.is-done h3 { font-weight: 500; }
+.section-h .pill { vertical-align: middle; }
+.section-h .link { margin-left: 8px; font-weight: 400; }

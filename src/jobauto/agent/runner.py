@@ -237,11 +237,44 @@ class LocalAgent:
             if fps:
                 self.cloud.clear_queued_jobs(fps)
 
+    # -------------------------------------------------------- decisions
+    def settle_decisions(self, decided: list[dict]) -> int:
+        """Mirror browser-side outcomes into the local database.
+
+        The cloud is authoritative for what the user chose; this machine is
+        authoritative for what it actually did. Only rows still 'prepared'
+        move, so this can never rewrite a real local outcome.
+        """
+        if not decided:
+            return 0
+
+        settled = 0
+        db = Database()
+        try:
+            for row in decided:
+                fingerprint = str(row.get("fingerprint") or "")
+                status = str(row.get("status") or "")
+                if not fingerprint or status not in ("submitted", "skipped"):
+                    continue
+                settled += db.settle_application(
+                    fingerprint, status, str(row.get("portal") or ""))
+        finally:
+            db.close()
+
+        if settled:
+            self.log(f"  settled {settled} application(s) decided in the dashboard")
+        return settled
+
     # ------------------------------------------------------------- loop
     def tick(self) -> None:
         self.sync_preferences()
         work = self.cloud.work()
         task, queued = work.get("task"), work.get("queued_jobs") or []
+
+        # Apply browser-side decisions first, so an application the user
+        # already submitted or skipped is not re-pushed as pending on the way
+        # out of this same tick.
+        self.settle_decisions(work.get("decided") or [])
 
         if not task and not queued:
             return

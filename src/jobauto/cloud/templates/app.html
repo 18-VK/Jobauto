@@ -74,8 +74,20 @@
     Applications are filled on your PC and left <strong>unsent</strong>. Open each
     one, check it, submit it yourself, then mark it here.
   </div>
+  <h3 class="section-h">
+    Waiting for you <span class="pill" id="c-apps-pending">0</span>
+  </h3>
   <div id="apps" class="cards"></div>
-  <p class="empty" id="apps-empty" hidden>Nothing yet.</p>
+  <p class="empty" id="apps-empty" hidden>
+    Nothing waiting. Anything you've submitted or skipped is below.
+  </p>
+
+  <h3 class="section-h">
+    Done <span class="pill" id="c-apps-done">0</span>
+    <button class="link" id="btn-toggle-done">show</button>
+  </h3>
+  <div id="apps-done" class="cards" hidden></div>
+  <p class="empty" id="apps-done-empty" hidden>Nothing completed yet.</p>
 </section>
 
 <!-- ---------------------------------------------------- preferences -->

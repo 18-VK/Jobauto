@@ -720,3 +720,117 @@ def test_mail_falls_back_to_log_without_smtp(monkeypatch, caplog):
 
     assert sent is False                       # must not claim it emailed
     assert "https://x/reset/tok" in caplog.text
+
+
+# ============================= application status is not clobbered by sync
+def _push_prepared(client, tok, fp="f1", status="prepared"):
+    return client.post("/api/agent/applications", headers=H(tok), json={
+        "applications": [{
+            "fingerprint": fp, "portal": "naukri", "title": "Backend Developer",
+            "company": "Acme", "url": "https://x/1", "status": status,
+            "answered": {"Notice period?": "60 days"},
+            "escalated": ["Why this role?"],
+        }]})
+
+
+def _status(client, fp="f1"):
+    apps = client.get("/api/applications").get_json()["applications"]
+    return next(a["status"] for a in apps if a["title"] == "Backend Developer")
+
+
+def test_agent_resync_does_not_reopen_a_submitted_application(client):
+    """The bug: the agent re-pushes everything still 'prepared' locally on
+    every poll, so marking something submitted in the browser was undone
+    within about thirty seconds and it came back as pending."""
+    signup(client)
+    tok = agent_token(client)
+    _push_prepared(client, tok)
+
+    app_id = client.get("/api/applications").get_json()["applications"][0]["id"]
+    client.post(f"/api/applications/{app_id}/submitted")
+    assert _status(client) == "submitted"
+
+    _push_prepared(client, tok)          # the next agent poll
+    assert _status(client) == "submitted"
+
+
+def test_agent_resync_does_not_reopen_a_skipped_application(client):
+    signup(client)
+    tok = agent_token(client)
+    _push_prepared(client, tok)
+
+    app_id = client.get("/api/applications").get_json()["applications"][0]["id"]
+    client.post(f"/api/applications/{app_id}/skip")
+    assert _status(client) == "skipped"
+
+    _push_prepared(client, tok)
+    assert _status(client) == "skipped"
+
+
+def test_decided_applications_leave_the_pending_count(client):
+    signup(client)
+    tok = agent_token(client)
+    _push_prepared(client, tok)
+    assert client.get("/api/summary").get_json()["counts"]["pending"] == 1
+
+    app_id = client.get("/api/applications").get_json()["applications"][0]["id"]
+    client.post(f"/api/applications/{app_id}/submitted")
+
+    counts = client.get("/api/summary").get_json()["counts"]
+    assert counts["pending"] == 0
+    assert counts["submitted"] == 1
+
+    _push_prepared(client, tok)          # and it stays gone after a resync
+    assert client.get("/api/summary").get_json()["counts"]["pending"] == 0
+
+
+def test_agent_still_refreshes_an_undecided_application(client):
+    """The guard must not freeze applications you have not ruled on."""
+    signup(client)
+    tok = agent_token(client)
+    _push_prepared(client, tok)
+
+    client.post("/api/agent/applications", headers=H(tok), json={
+        "applications": [{
+            "fingerprint": "f1", "portal": "naukri", "title": "Backend Developer",
+            "company": "Acme", "url": "https://x/1", "status": "failed",
+            "note": "selector drifted"}]})
+
+    apps = client.get("/api/applications").get_json()["applications"]
+    assert apps[0]["status"] == "failed"
+    assert apps[0]["note"] == "selector drifted"
+
+
+def test_agent_work_reports_decisions_back(client):
+    """So the agent can settle them locally and stop re-pushing."""
+    signup(client)
+    tok = agent_token(client)
+    _push_prepared(client, tok)
+    app_id = client.get("/api/applications").get_json()["applications"][0]["id"]
+    client.post(f"/api/applications/{app_id}/submitted")
+
+    work = client.get("/api/agent/work", headers=H(tok)).get_json()
+    assert {"fingerprint": "f1", "portal": "naukri",
+            "status": "submitted"} in work["decided"]
+
+
+def test_undecided_applications_are_not_reported_as_decided(client):
+    signup(client)
+    tok = agent_token(client)
+    _push_prepared(client, tok)
+    assert client.get("/api/agent/work", headers=H(tok)).get_json()["decided"] == []
+
+
+def test_reopen_puts_it_back_in_pending(client):
+    """Skip is easy to hit by accident, so it must be reversible."""
+    signup(client)
+    tok = agent_token(client)
+    _push_prepared(client, tok)
+    app_id = client.get("/api/applications").get_json()["applications"][0]["id"]
+
+    client.post(f"/api/applications/{app_id}/skip")
+    assert _status(client) == "skipped"
+
+    assert client.post(f"/api/applications/{app_id}/reopen").status_code == 200
+    assert _status(client) == "prepared"
+    assert client.get("/api/summary").get_json()["counts"]["pending"] == 1
