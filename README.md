@@ -266,7 +266,12 @@ That is the last thing you type. The installer already registered the agent as
 a Windows scheduled task, so it is running in the background and you can close
 the window. The dot in the dashboard header turns green.
 
-If you skipped that, or it ever stops:
+**The short way:** double-click **`setup-agent.bat`** in this folder. It
+installs or upgrades the agent, checks the browser is there, and registers it
+to run on its own. Safe to run again whenever -- your portal logins, database
+and dashboard link all survive.
+
+If you prefer to type it, or it ever stops:
 
 ```powershell
 jobauto autostart            # register it and start it now
