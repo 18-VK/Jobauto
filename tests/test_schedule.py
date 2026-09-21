@@ -431,3 +431,82 @@ def test_the_documented_column_exists():
     from jobauto.cloud.db import User
     assert "schedule_last_run" in _doc()
     assert "schedule_last_run" in User.__table__.columns
+
+
+# ------------------------------------------------ the timezone database
+# zoneinfo carries no data of its own; it reads the system's. Slim Linux
+# images ship none, and psycopg declares tzdata only on Windows -- so on a
+# deployed server every zone silently became UTC and a 09:00 IST schedule
+# fired at 14:30. The symptom was a next-run time nobody chose.
+def test_tzdata_is_an_explicit_dependency():
+    """It arrived transitively via psycopg on Windows only, which is exactly
+    the platform the server is not."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    assert "tzdata" in (root / "requirements.txt").read_text(encoding="utf-8")
+
+
+def test_a_real_zone_resolves():
+    assert schedule.zone_available("Asia/Kolkata")
+
+
+def test_a_nonsense_zone_is_reported_rather_than_assumed():
+    assert not schedule.zone_available("Not/AZone")
+
+
+def test_an_unknown_zone_still_falls_back_rather_than_crashing():
+    """A missing database must not take the site down -- but see the warning
+    it now logs, and the flag the API returns."""
+    assert schedule._zone("Not/AZone").key == "UTC"
+
+
+def test_nine_am_kolkata_is_three_thirty_utc():
+    """The bug reported it as 09:00 UTC, which a browser in IST renders as
+    14:30 -- the "next run at 2" nobody asked for."""
+    from datetime import date
+    settings = dict(schedule.DEFAULTS, enabled=True, time="09:00",
+                    timezone="Asia/Kolkata")
+    due = schedule.due_at(settings, date(2026, 9, 22))
+    assert (due.hour, due.minute) == (3, 30)
+
+
+# -------------------------------------------- YAML turns times into integers
+def test_an_unquoted_afternoon_time_is_recovered():
+    """`time: 14:00` unquoted is not a string: YAML 1.1 reads it as the
+    sexagesimal integer 840. Falling back to a default would silently replace
+    the hour someone chose."""
+    import yaml
+    parsed = yaml.safe_load("time: 14:00")["time"]
+    assert parsed == 840                      # the bug, confirmed
+    assert schedule._parse_time(parsed).hour == 14
+
+
+def test_a_leading_zero_time_survives_yaml_unharmed():
+    """Which is why this only ever bit in the afternoon."""
+    import yaml
+    assert yaml.safe_load("time: 09:00")["time"] == "09:00"
+
+
+def test_a_quoted_time_is_read_as_written():
+    assert schedule._parse_time("22:15").hour == 22
+    assert schedule._parse_time(1335).hour == 22
+
+
+def test_the_dashboard_quotes_the_time_it_writes():
+    """Otherwise it would save the bug back into the file on every edit."""
+    from pathlib import Path
+    js = (Path(__file__).resolve().parent.parent
+          / "src" / "jobauto" / "cloud" / "static" / "cloud.js"
+          ).read_text(encoding="utf-8")
+    assert 'time: "${' in js
+
+
+def test_a_garbage_time_still_falls_back():
+    assert schedule._parse_time("half past nine") == __import__(
+        "datetime").time(9, 0)
+
+
+def test_a_boolean_does_not_become_a_time():
+    """`time: yes` is True in YAML 1.1, and True is an int in Python -- so
+    the integer branch would read it as 00:01."""
+    assert schedule._parse_time(True) == __import__("datetime").time(9, 0)

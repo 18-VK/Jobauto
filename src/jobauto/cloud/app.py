@@ -425,6 +425,11 @@ def create_app() -> Flask:
                 "defaults": schedule.DEFAULTS,
                 "next_run": _iso(upcoming),
                 "last_run": _iso(user.schedule_last_run),
+                # Surfaced rather than only logged: a server without the
+                # timezone database shifts every run by the UTC offset, and
+                # the only symptom the user sees is a time they did not pick.
+                "timezone_ok": schedule.zone_available(
+                    settings.get("timezone", "UTC")),
                 "per_day": (int(settings.get("batch_size", 5))
                             * int(settings.get("max_batches", 4))),
             })

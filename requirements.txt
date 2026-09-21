@@ -6,6 +6,13 @@ Flask>=3.0
 # Cloud deployment + agent
 SQLAlchemy>=2.0
 psycopg[binary]>=3.1
+
+# The IANA timezone database. Not optional: the daily schedule stores a zone
+# like Asia/Kolkata, and zoneinfo has no data of its own -- it reads the
+# system's. Slim Linux images ship none, and psycopg only pulls this in on
+# Windows, so without it every zone silently resolves to UTC and a 09:00 run
+# fires at 14:30 IST.
+tzdata>=2024.1
 requests>=2.31
 gunicorn>=21.2
 

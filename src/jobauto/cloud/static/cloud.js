@@ -506,6 +506,18 @@ async function loadSchedule() {
   $('#sched-next').textContent = d.next_run
     ? `next run ${new Date(d.next_run).toLocaleString()}`
     : 'not scheduled';
+
+  // Without the timezone database the server treats your time as UTC, so a
+  // 09:00 schedule fires at 14:30 IST. Saying so beats letting someone stare
+  // at a next-run time they never chose.
+  if (d.timezone_ok === false) {
+    $('#sched-next').textContent +=
+      `  —  warning: the server does not know "${d.settings.timezone}", `
+      + 'so your time is being read as UTC. The times above are wrong.';
+    $('#sched-next').classList.add('warn');
+  } else {
+    $('#sched-next').classList.remove('warn');
+  }
 }
 
 function updateScheduleTotal() {

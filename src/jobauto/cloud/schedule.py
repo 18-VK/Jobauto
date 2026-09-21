@@ -57,18 +57,54 @@ def settings_for(user: User) -> dict[str, Any]:
     return out
 
 
+def zone_available(name: str) -> bool:
+    try:
+        ZoneInfo(name)
+        return True
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+
+
 def _zone(name: str) -> ZoneInfo:
+    """The user's timezone, falling back to UTC -- loudly.
+
+    zoneinfo carries no data of its own; it reads the system's, and slim Linux
+    images ship none. The fallback has to stay (a missing database must not
+    take the site down) but it must not be silent: it moves every run by the
+    UTC offset, so a 09:00 schedule fires at 14:30 IST and the only symptom is
+    a time nobody chose. Install `tzdata` to fix it properly.
+    """
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
+        log.warning(
+            "timezone %r is unavailable on this server, falling back to UTC -- "
+            "scheduled runs will be off by that zone's offset. "
+            "Install the tzdata package.", name)
         return ZoneInfo("UTC")
 
 
 def _parse_time(value: Any) -> time:
+    """Read a schedule time, including the shape YAML turns it into.
+
+    An unquoted `time: 14:00` is not a string. YAML 1.1 reads it as a
+    sexagesimal integer -- 14*60 = 840 -- so a hand-edited preferences file
+    silently loses the time it says. Times with a leading zero (`09:00`)
+    survive as strings, which is why this only bites in the afternoon.
+
+    Recovered rather than rejected: 840 unambiguously means 14:00, and falling
+    back to a default would replace the hour someone chose with one they did
+    not, quietly.
+    """
+    if isinstance(value, bool):
+        return time(9, 0)
+    if isinstance(value, int):
+        return time((value // 60) % 24, value % 60)
+
     text = str(value or "09:00").strip()
     try:
         hour, _, minute = text.partition(":")
-        return time(int(hour), int(minute or 0))
+        return time(int(hour) % 24, int(minute or 0) % 60)
     except (TypeError, ValueError):
         return time(9, 0)
 
