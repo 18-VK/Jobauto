@@ -11,6 +11,7 @@ cannot cascade to the others.
 from __future__ import annotations
 
 import contextlib
+import logging
 import json
 import os
 import subprocess
@@ -30,6 +31,8 @@ Object.defineProperty(navigator, 'languages', {get: () => ['en-IN', 'en-US', 'en
 Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
 window.chrome = window.chrome || {runtime: {}};
 """
+
+log = logging.getLogger("jobauto.browser")
 
 DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
@@ -137,23 +140,107 @@ class BrowserSession:
 
         self._cleanup_stale_browser_session(self.profile_dir)
         self._pw = sync_playwright().start()
-        self._ctx = self._pw.chromium.launch_persistent_context(
-            user_data_dir=str(self.profile_dir),
-            headless=self.headless,
-            viewport={"width": 1440, "height": 900},
-            locale="en-IN",
-            timezone_id="Asia/Kolkata",
-            user_agent=DEFAULT_UA,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ],
-        )
+        self._ctx = self._launch_with_fallback()
         self._ctx.add_init_script(_STEALTH)
         self.page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
         self.page.set_default_timeout(20000)
         return self.page
+
+    # Playwright's own Chromium lives under the user profile, which managed
+    # Windows machines routinely forbid executing from. Edge and Chrome sit in
+    # Program Files and are already approved, so they work where it does not.
+    # None means Playwright's bundled build.
+    _CHANNELS = (None, "msedge", "chrome")
+
+    # Windows ERROR_ACCESS_DISABLED_BY_POLICY: "blocked by group policy".
+    _POLICY_EXIT_CODE = "1260"
+
+    def _launch_options(self) -> dict[str, Any]:
+        return {
+            "user_data_dir": str(self.profile_dir),
+            "headless": self.headless,
+            "viewport": {"width": 1440, "height": 900},
+            "locale": "en-IN",
+            "timezone_id": "Asia/Kolkata",
+            "user_agent": DEFAULT_UA,
+            "args": [
+                "--disable-blink-features=AutomationControlled",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ],
+        }
+
+    def _launch_with_fallback(self):
+        """Try the bundled browser, then the ones the machine already trusts.
+
+        A blocked launch is not an error worth surfacing on its own: the next
+        candidate usually works, and only the final failure is worth reporting.
+        """
+        configured = os.environ.get("JOBAUTO_BROWSER_CHANNEL", "").strip()
+        channels = ([configured] if configured
+                    else [c for c in self._CHANNELS])
+
+        attempts: list[str] = []
+        for channel in channels:
+            options = self._launch_options()
+            if channel:
+                options["channel"] = channel
+            try:
+                context = self._pw.chromium.launch_persistent_context(**options)
+                if channel:
+                    log.info("using the installed %s", channel)
+                return context
+            except Exception as exc:
+                name = channel or "bundled chromium"
+                attempts.append(f"{name}: {str(exc).splitlines()[0][:120]}")
+                if self._POLICY_EXIT_CODE in str(exc):
+                    log.warning("%s is blocked by group policy, trying another",
+                                name)
+                continue
+
+        raise RuntimeError(self._explain_launch_failure(attempts))
+
+    def _explain_launch_failure(self, attempts: list[str]) -> str:
+        blocked = any(self._POLICY_EXIT_CODE in a for a in attempts)
+        lines = ["", "  No browser could be started.", ""]
+        for attempt in attempts:
+            lines.append(f"    {attempt}")
+        lines.append("")
+
+        if blocked:
+            lines += [
+                "  Exit code 1260 is Windows reporting ACCESS_DISABLED_BY_POLICY:",
+                "  the browser was started and then killed by this machine's",
+                "  security policy.",
+                "",
+                "  This is usually a managed work laptop. Automation control uses",
+                "  a remote debugging port, and endpoint security commonly kills",
+                "  any browser exposing one -- it is the same channel that could",
+                "  be used to read your sessions. Installing a different browser",
+                "  does not help: the rule is about how it is being driven, not",
+                "  which one it is.",
+                "",
+                "  What does work:",
+                "",
+                "    - Run the agent on a personal machine instead. This is the",
+                "      clean answer; nothing needs configuring.",
+                "",
+                "    - Or sign in on a machine that allows it, then bring the",
+                "      sessions here:",
+                "          on that machine:  jobauto export-session",
+                "          on this one:      jobauto import-session --file <file>",
+                "      Searching may then work with --headless, which some",
+                "      policies allow even when a visible window is blocked.",
+                "",
+                "    - Or ask IT to permit it. Worth knowing they will see a",
+                "      browser being automated, so ask rather than work around it.",
+            ]
+        else:
+            lines += [
+                "  If the browser was never downloaded, run:",
+                "    python -m playwright install chromium",
+            ]
+        return "\n".join(lines)
 
     def stop(self) -> None:
         with contextlib.suppress(Exception):

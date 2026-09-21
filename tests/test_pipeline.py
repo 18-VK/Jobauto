@@ -743,3 +743,48 @@ def test_settle_application_never_overwrites_a_real_outcome(db):
 
 def test_settle_application_ignores_unknown_fingerprints(db):
     assert db.settle_application("nosuchfingerprint", "submitted") == 0
+
+
+# ------------------------------------- browser blocked by machine policy
+def test_launch_falls_back_through_installed_browsers():
+    """Playwright's own Chromium lives under the user profile, which some
+    managed machines forbid executing from."""
+    from jobauto.browser import BrowserSession
+    assert BrowserSession._CHANNELS[0] is None          # bundled first
+    assert "msedge" in BrowserSession._CHANNELS
+    assert "chrome" in BrowserSession._CHANNELS
+
+
+def test_policy_block_is_explained_not_dumped():
+    """exitCode=1260 buried in a Playwright call log tells the user nothing."""
+    from jobauto.browser import BrowserSession
+
+    message = BrowserSession._explain_launch_failure(
+        BrowserSession,
+        ["bundled chromium: <process did exit: exitCode=1260, signal=null>",
+         "msedge: <process did exit: exitCode=1260, signal=null>"])
+
+    assert "ACCESS_DISABLED_BY_POLICY" in message
+    assert "security policy" in message
+    # It must not send them chasing a different browser -- that does not help.
+    assert "does not help" in message
+    # And it must name the routes that actually work.
+    assert "personal machine" in message
+    assert "export-session" in message
+
+
+def test_a_plain_missing_browser_says_so_instead():
+    from jobauto.browser import BrowserSession
+
+    message = BrowserSession._explain_launch_failure(
+        BrowserSession, ["bundled chromium: Executable doesn't exist"])
+    assert "playwright install chromium" in message
+    assert "ACCESS_DISABLED_BY_POLICY" not in message
+
+
+def test_channel_can_be_forced_by_environment(monkeypatch):
+    """So someone who knows their machine can skip the probing."""
+    import inspect
+    from jobauto.browser import BrowserSession
+    src = inspect.getsource(BrowserSession._launch_with_fallback)
+    assert "JOBAUTO_BROWSER_CHANNEL" in src
