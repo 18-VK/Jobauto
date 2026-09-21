@@ -17,7 +17,8 @@ from .db import Database
 from .forms import ScreeningAnswerer, pick_resume
 from .models import AppStatus, Application, Job
 from .portals import registry
-from .portals.base import ChallengeDetected, LoginRequired, PortalError
+from .portals.base import (ChallengeDetected, LoginRequired, PortalError,
+                          VerificationRequired)
 from .review import Decision, ReviewGate
 from .scoring import Scorer
 
@@ -130,6 +131,13 @@ class Pipeline:
                         note = str(exc)
                         self._say(portal.id, str(exc))
                         break
+                    except VerificationRequired as exc:
+                        # Not `challenged`: this never clears on its own, so
+                        # parking the portal for three days would replace a
+                        # thing you can fix in two minutes with silence.
+                        note = str(exc)
+                        self._say(portal.id, str(exc))
+                        break
                     except ChallengeDetected as exc:
                         note = str(exc)
                         challenged = True
@@ -147,6 +155,9 @@ class Pipeline:
                     self._say(portal.id, note)
                 elif jobs:
                     self._say(portal.id, f"done -- {len(jobs)} jobs to score")
+        except VerificationRequired as exc:
+            note = str(exc)
+            self._say(portal.id, note)
         except ChallengeDetected as exc:
             # Raised while opening the portal rather than mid-search.
             note = str(exc)
@@ -426,6 +437,11 @@ class Pipeline:
                 job = _job_from_row(row)
                 try:
                     job = adapter.fetch_detail(job)
+                except VerificationRequired as exc:
+                    # Stops the portal like a challenge does, but records no
+                    # cool-off: this is a two-minute job for you, not a wait.
+                    self.log(f"    {exc}")
+                    return False
                 except ChallengeDetected as exc:
                     self.log(f"    {exc}")
                     self._cool_off(adapter, str(exc))
@@ -439,6 +455,11 @@ class Pipeline:
 
                 try:
                     on_form, note = adapter.open_application(job)
+                except VerificationRequired as exc:
+                    # Stops the portal like a challenge does, but records no
+                    # cool-off: this is a two-minute job for you, not a wait.
+                    self.log(f"    {exc}")
+                    return False
                 except ChallengeDetected as exc:
                     self.log(f"    {exc}")
                     self._cool_off(adapter, str(exc))

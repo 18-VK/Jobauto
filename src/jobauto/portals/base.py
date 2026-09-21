@@ -34,6 +34,19 @@ class ChallengeDetected(PortalError):
     rather than retrying into a ban."""
 
 
+class VerificationRequired(PortalError):
+    """The portal wants the *account* verified -- an emailed code, a phone
+    number, a consent screen.
+
+    Deliberately not a ChallengeDetected, even though both stop the portal. A
+    bot check is about how the traffic looks and is answered by backing off; it
+    clears itself with time. This does not. Waiting 72 hours and trying again
+    produces the identical page, forever, because nothing has been done. It
+    needs a person in a browser, once, so it is reported as a thing to do
+    rather than a thing to wait out.
+    """
+
+
 class PortalAdapter(ABC):
     """Subclasses must implement `search`; `fetch_detail` and `apply` have
     usable defaults driven entirely by the YAML selectors."""
@@ -95,12 +108,35 @@ class PortalAdapter(ABC):
     _CHALLENGE_URL_MARKERS = ("__cf_chl", "/cdn-cgi/challenge", "px-captcha",
                               "/challenge-platform", "distil_r_captcha")
 
+    # Account verification, not traffic analysis. Indeed's "Additional
+    # Verification Required" is the common one: it wants an emailed code
+    # entered once, and no amount of pacing or backing off will satisfy it.
+    _VERIFY_MARKERS = ("additional verification", "verify your email",
+                       "verify your account", "/account/verify",
+                       "verification required", "confirm your identity")
+
     def guard_challenge(self) -> None:
         """Abort the portal on a captcha/challenge rather than retrying."""
         try:
             current = (self.page.url or "").lower()
         except Exception:
             current = ""
+        try:
+            title = (self.page.title() or "").lower()
+        except Exception:
+            title = ""
+
+        # Checked before the bot-check markers: several of these pages are
+        # served from a URL that also contains "challenge", and calling this a
+        # bot check would send you off to wait three days for a page that only
+        # ever clears by hand.
+        if any(m in current or m in title for m in self._VERIFY_MARKERS):
+            raise VerificationRequired(
+                f"{self.portal.name} wants the account verified before it will "
+                f"show anything -- open it in a normal browser, finish the "
+                f"verification once, then run this again. Waiting will not "
+                f"clear it.")
+
         if any(marker in current for marker in self._CHALLENGE_URL_MARKERS):
             raise ChallengeDetected(
                 f"{self.portal.name} served a bot check instead of results. "

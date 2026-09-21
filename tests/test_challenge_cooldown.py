@@ -192,3 +192,91 @@ def test_user_agent_can_still_be_forced(monkeypatch):
     """An escape hatch for debugging, off by default."""
     monkeypatch.setenv("JOBAUTO_USER_AGENT", "Mozilla/5.0 Custom")
     assert _options()["user_agent"] == "Mozilla/5.0 Custom"
+
+
+# ------------------------------- verification is not a bot check
+# Indeed's "Additional Verification Required" stops a run the same way a
+# Cloudflare page does, but the two want opposite responses. A bot check is
+# about how the traffic looks and clears itself if you back off. Account
+# verification never clears on its own -- waiting 72 hours produces the same
+# page, forever, because nothing has been done.
+class _Page:
+    def __init__(self, url="", title=""):
+        self.url = url
+        self._title = title
+
+    def title(self):
+        return self._title
+
+    def locator(self, _sel):
+        raise AssertionError("should not reach selectors")
+
+
+def _adapter(url="", title=""):
+    from jobauto.portals.base import PortalAdapter
+
+    class _A(PortalAdapter):
+        def search(self, role):
+            return iter(())
+
+    portal = PortalConfig(id="indeed", name="Indeed", enabled=True,
+                          base_url="", adapter="x:Y")
+    return _A(portal, make_config(), _Page(url, title))
+
+
+def test_indeed_account_verification_is_not_reported_as_a_bot_check():
+    from jobauto.portals.base import VerificationRequired
+
+    a = _adapter(title="Additional Verification Required")
+    with pytest.raises(VerificationRequired) as caught:
+        a.guard_challenge()
+    assert "verified" in str(caught.value)
+    assert "Waiting will not clear it" in str(caught.value)
+
+
+def test_verification_is_checked_before_the_bot_check_markers():
+    """Some verification pages are served from a URL containing "challenge".
+    Matching the bot-check marker first would send you off to wait three days
+    for something that only ever clears by hand."""
+    from jobauto.portals.base import ChallengeDetected, VerificationRequired
+
+    a = _adapter(url="https://secure.indeed.com/challenge/verify",
+                 title="Additional Verification Required")
+    with pytest.raises(VerificationRequired):
+        a.guard_challenge()
+    assert not isinstance(VerificationRequired("x"), ChallengeDetected)
+
+
+def test_a_real_bot_check_still_raises_a_challenge():
+    from jobauto.portals.base import ChallengeDetected
+
+    a = _adapter(url="https://in.indeed.com/?__cf_chl_rt_tk=abc", title="")
+    with pytest.raises(ChallengeDetected):
+        a.guard_challenge()
+
+
+def test_verification_does_not_park_the_portal(db, monkeypatch):
+    """Parking it for three days would replace a two-minute fix with silence."""
+    from jobauto.portals.base import VerificationRequired
+
+    lines = []
+    pipe = _pipeline(db, lines, ["indeed"])
+
+    def raise_verification(portal, roles, headless):
+        try:
+            raise VerificationRequired("verify the account")
+        except VerificationRequired as exc:
+            return portal.id, [], str(exc), False
+
+    monkeypatch.setattr(pipe, "_search_portal", raise_verification)
+    pipe.discover(parallel=False)
+    assert db.cooling_until("indeed") is None
+    assert "verify the account" in " ".join(lines)
+
+
+def test_the_landing_diagnosis_puts_verification_before_bot_checks():
+    from jobauto.portals.generic import ConfigDrivenAdapter
+
+    first = ConfigDrivenAdapter._LANDING_SIGNS[0]
+    assert any("verification" in m for m in first[0])
+    assert "verified" in first[1]
