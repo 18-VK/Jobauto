@@ -895,3 +895,13 @@ def test_auth_failure_mentions_percent_encoding():
     message = clouddb.explain_connection_failure(
         url, Exception('FATAL:  password authentication failed for user "postgres"'))
     assert "percent-encoded" in message
+
+
+def test_agents_endpoint_exposes_the_token_for_the_installer(client):
+    """The installer asks for it by hand, so the dashboard has to be able to
+    show it -- it cannot only appear inside a pre-filled command."""
+    signup(client)
+    agent = client.get("/api/agents").get_json()["agents"][0]
+    assert agent["token"]
+    assert len(agent["token"]) > 30
+    assert agent["name"]

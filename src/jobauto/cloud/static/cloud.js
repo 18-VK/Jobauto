@@ -457,6 +457,51 @@ $('#btn-pref-save').onclick = async () => {
 $('#btn-pref-reload').onclick = loadPrefs;
 
 /* ------------------------------------------------------------ devices */
+function tokenPanel(agent) {
+  const box = el('div', 'token-panel');
+  box.append(el('div', 'token-label', 'Agent token'));
+
+  const masked = '•'.repeat(Math.min(agent.token.length, 44));
+  const value = el('code', 'token-value', masked);
+  value.dataset.shown = 'no';
+  box.append(value);
+
+  const actions = el('div', 'token-actions');
+
+  // Hidden by default: this panel is often open while screen-sharing or
+  // while someone is standing behind you, and the token is a credential.
+  const toggle = el('button', 'btn btn-sm', 'Show');
+  toggle.onclick = () => {
+    const shown = value.dataset.shown === 'yes';
+    value.textContent = shown ? masked : agent.token;
+    value.dataset.shown = shown ? 'no' : 'yes';
+    toggle.textContent = shown ? 'Show' : 'Hide';
+  };
+  actions.append(toggle);
+
+  // Copy works without revealing it, which is what you usually want.
+  const copy = el('button', 'btn btn-sm btn-primary', 'Copy token');
+  copy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(agent.token);
+      copy.textContent = 'Copied';
+      setTimeout(() => (copy.textContent = 'Copy token'), 1500);
+    } catch {
+      value.textContent = agent.token;
+      value.dataset.shown = 'yes';
+      toggle.textContent = 'Hide';
+      alert('Copy failed — the token is now shown, select it manually.');
+    }
+  };
+  actions.append(copy);
+  box.append(actions);
+
+  box.append(el('div', 'token-hint',
+    'Paste this when the installer asks for it. Treat it like a password: '
+    + 'anyone holding it can push data into this account. Rotate it if it leaks.'));
+  return box;
+}
+
 async function loadDevices() {
   let d, t;
   try {
@@ -484,6 +529,10 @@ async function loadDevices() {
     };
     row.append(rot);
     wrap.append(row);
+
+    // The installer asks for this by hand, so it has to be readable and
+    // copyable here -- not buried in a command block.
+    wrap.append(tokenPanel(ag));
   });
 
   if (d.agents.length) {
