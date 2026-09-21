@@ -229,3 +229,51 @@ def test_installer_says_both_steps_are_required():
 def test_skipping_login_warns_rather_than_going_quiet():
     script = installer.installer_script("https://x.example")
     assert "Searches will find nothing until you run" in script
+
+
+# ------------------------------------- autostart robustness on a free machine
+def test_scheduled_task_restarts_the_agent_if_it_crashes():
+    """The point of preferring a task over a Startup shortcut: a shortcut runs
+    once and is gone if the process dies."""
+    script = installer.installer_script("https://x.example")
+    assert "RestartCount 5" in script
+    assert "RestartInterval" in script
+
+
+def test_scheduled_task_survives_a_laptop():
+    script = installer.installer_script("https://x.example")
+    assert "AllowStartIfOnBatteries" in script
+    assert "DontStopIfGoingOnBatteries" in script
+
+
+def test_scheduled_task_does_not_time_out():
+    """Windows stops a task after three days by default; the agent is meant to
+    run indefinitely."""
+    script = installer.installer_script("https://x.example")
+    assert "ExecutionTimeLimit" in script
+
+
+def test_scheduled_task_does_not_stack_duplicate_agents():
+    script = installer.installer_script("https://x.example")
+    assert "MultipleInstances IgnoreNew" in script
+
+
+def test_logon_start_waits_for_the_network():
+    """Polling before the network is up fails and backs off before anything
+    has had a chance to work."""
+    script = installer.installer_script("https://x.example")
+    assert "Delay = 'PT1M'" in script
+
+
+def test_autostart_still_falls_back_where_tasks_need_admin():
+    script = installer.installer_script("https://x.example")
+    assert "GetFolderPath('Startup')" in script
+    assert "Start it by hand instead" in script
+
+
+def test_installer_points_at_the_daily_schedule():
+    """Otherwise people build their own Task Scheduler entries for discover and
+    apply, which the schedule already does."""
+    script = installer.installer_script("https://x.example")
+    assert "Run automatically" in script
+    assert "Preferences" in script

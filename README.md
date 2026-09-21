@@ -625,7 +625,7 @@ see `naukri.py` for a chatbot flow, `linkedin.py` for a multi-step wizard.
 ## Tests
 
 ```powershell
-python -m pytest -q      # 360 tests, no browser or network required
+python -m pytest -q      # 367 tests, no browser or network required
 ```
 
 Covers scoring and parsing, config validation, screening answers, the full
@@ -650,6 +650,7 @@ src/jobauto/
   web/                   local dashboard
   cloud/                 hosted app: login, sync API, task queue, installer
   agent/                 local agent: polls the cloud, runs the work
+docs/NEW-MACHINE.md      setting up a machine to do the work
 docs/DEPLOY.md           deploying with a permanent URL
 docs/DATABASE.md         Supabase migration and connection strings
 docs/RISKS.md            account-ban tradeoffs

@@ -98,6 +98,9 @@ start at login. Nothing else on the computer is touched, and deleting
 
 The exact command, with your URL already filled in, is on the **Devices** tab.
 
+Step-by-step for that machine, including autostart and what to check:
+**[NEW-MACHINE.md](NEW-MACHINE.md)**.
+
 Afterwards, on that machine:
 
 ```powershell

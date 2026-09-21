@@ -244,16 +244,35 @@ $auto = Read-Host '  Start the agent automatically when you log in? (y/N)'
 if ($auto -match '^[Yy]') {
     $registered = $false
 
-    # Preferred, but Register-ScheduledTask needs elevation on many machines
-    # and fails with "Access is denied" without it.
+    # Preferred where it is allowed: unlike a Startup shortcut, a scheduled
+    # task restarts the agent if it crashes and survives a machine that stays
+    # on for weeks. Needs elevation on managed machines and fails with
+    # "Access is denied" without it.
     try {
         $action  = New-ScheduledTaskAction -Execute $Exe -Argument 'agent'
+        # A short delay lets the network come up first, so the first poll does
+        # not fail and back off before anything has had a chance to work.
         $trigger = New-ScheduledTaskTrigger -AtLogOn
+        $trigger.Delay = 'PT1M'
+
+        $settings = New-ScheduledTaskSettingsSet `
+            -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+            -StartWhenAvailable -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 5) `
+            -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
+            -MultipleInstances IgnoreNew
+
         Register-ScheduledTask -TaskName 'jobauto-agent' -Action $action `
-            -Trigger $trigger -Force -Description 'jobauto cloud sync agent' | Out-Null
-        Write-Host '  registered as a scheduled task -- starts at every login.' -ForegroundColor Green
+            -Trigger $trigger -Settings $settings -Force `
+            -Description 'jobauto cloud sync agent' | Out-Null
+
+        Write-Host '  registered as a scheduled task.' -ForegroundColor Green
+        Write-Host '    starts a minute after you log in, restarts if it crashes,' -ForegroundColor DarkGray
+        Write-Host '    and never times out.' -ForegroundColor DarkGray
+        Write-Host '    remove it with:  Unregister-ScheduledTask jobauto-agent' -ForegroundColor DarkGray
         $registered = $true
-    } catch { }
+    } catch {
+        Write-Host '  the task scheduler refused (needs admin on managed machines).' -ForegroundColor DarkGray
+    }
 
     # A shortcut in the Startup folder is per-user and needs no privileges, so
     # it works where the scheduler does not.
@@ -324,6 +343,14 @@ $doAgent = Read-Host '     Start it now? (Y/n)'
 Write-Host ''
 Write-Host '  Everything lives in ~/.jobauto -- delete that folder to remove it all.' -ForegroundColor DarkGray
 Write-Host "  Dashboard: $Base" -ForegroundColor DarkGray
+Write-Host ''
+
+Write-Host '  3. Optional: have it run by itself, once a day.' -ForegroundColor White
+Write-Host '     Open the dashboard, go to Preferences, and switch on'
+Write-Host '     "Run automatically". It searches the portals at the time you'
+Write-Host '     pick, then fills applications in batches -- still leaving every'
+Write-Host '     one for you to review and submit.'
+Write-Host "       $Base" -ForegroundColor Cyan
 Write-Host ''
 
 if ($doAgent -notmatch '^[Nn]') {
