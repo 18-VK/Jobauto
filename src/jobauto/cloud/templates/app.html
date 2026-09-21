@@ -26,9 +26,19 @@
   </div>
 </header>
 
+<!-- Saying only "you are offline" leaves the one question that matters
+     unanswered: what do I do about it? The usual cause is that the agent was
+     only ever started by hand, so closing the window stopped it. -->
 <div class="offline-bar" id="offline-bar" hidden>
-  Your PC is offline. You can still browse, edit preferences and queue jobs —
-  they run the moment the agent reconnects.
+  <strong>Your PC is offline.</strong>
+  You can still browse, edit preferences and queue jobs — they run the moment
+  the agent reconnects. Nothing will actually run until it does.
+  <br>
+  If you started the agent by typing a command, closing that window stopped it.
+  Run this once on your PC to keep it running for good:
+  <code>jobauto autostart</code>
+  — then <code>jobauto autostart --status</code> to see why, if it still says
+  offline here.
 </div>
 
 <main>

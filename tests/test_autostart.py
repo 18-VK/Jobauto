@@ -258,3 +258,58 @@ def test_an_unreachable_site_does_not_break_the_status_command(monkeypatch,
     monkeypatch.setattr("jobauto.agent.runner.load_agent_config", boom)
     cli._print_schedule_state()          # must not raise
     assert "could not ask the site" in capsys.readouterr().out
+
+
+# ------------------------------------ linking must not leave you disconnected
+def test_linking_sets_up_autostart(monkeypatch, capsys, tmp_path):
+    """Linking and then saying "start the agent and leave it running" is what
+    produced every offline dashboard: the agent lived in a window, and closing
+    the window stopped it for good."""
+    import argparse
+    from jobauto import cli
+
+    monkeypatch.setattr("jobauto.agent.CloudClient",
+                        lambda *a, **k: type("C", (), {
+                            "hello": lambda self, s: {"user": "me"}})())
+    monkeypatch.setattr("jobauto.agent.save_agent_config",
+                        lambda u, t: tmp_path / "agent.json")
+    registered = []
+    monkeypatch.setattr(autostart, "register",
+                        lambda: registered.append(True) or "registered")
+
+    args = argparse.Namespace(url="https://x.example", token="t",
+                              no_autostart=False)
+    assert cli.cmd_link(args) == 0
+    assert registered
+    assert "close this window" in capsys.readouterr().out
+
+
+def test_a_refused_autostart_does_not_fail_the_link(monkeypatch, capsys,
+                                                    tmp_path):
+    """The link itself succeeded; a locked-down scheduler must not undo it."""
+    import argparse
+    from jobauto import cli
+
+    monkeypatch.setattr("jobauto.agent.CloudClient",
+                        lambda *a, **k: type("C", (), {
+                            "hello": lambda self, s: {"user": "me"}})())
+    monkeypatch.setattr("jobauto.agent.save_agent_config",
+                        lambda u, t: tmp_path / "agent.json")
+
+    def refuse():
+        raise autostart.AutostartError("Access is denied")
+
+    monkeypatch.setattr(autostart, "register", refuse)
+    args = argparse.Namespace(url="https://x.example", token="t",
+                              no_autostart=False)
+    assert cli.cmd_link(args) == 0
+    assert "start it by hand" in capsys.readouterr().out.lower()
+
+
+def test_the_offline_banner_says_what_to_do_about_it(monkeypatch):
+    """"You are offline" leaves the only question that matters unanswered."""
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "src" / "jobauto"
+            / "cloud" / "templates" / "app.html").read_text(encoding="utf-8")
+    bar = html.split('id="offline-bar"')[1].split("</div>")[0]
+    assert "jobauto autostart" in bar

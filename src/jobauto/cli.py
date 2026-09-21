@@ -379,8 +379,23 @@ def cmd_link(args: argparse.Namespace) -> int:
     path = save_agent_config(url, args.token)
     print(f"  linked as {info.get('user')}")
     print(f"  saved to {path}")
-    print("\n  Now start the agent and leave it running:")
-    print("    python -m jobauto agent\n")
+
+    # Linking and then telling someone to "start the agent and leave it
+    # running" is what produced every offline dashboard: the agent lived in a
+    # window, and closing the window stopped it for good. A linked PC that
+    # does not stay connected is not linked in any useful sense, so set it up
+    # here rather than leaving it as a step to remember.
+    if not args.no_autostart:
+        from .agent import autostart as auto
+        try:
+            print(f"\n  {auto.register()}")
+            print("  you can close this window; it keeps running")
+        except auto.AutostartError as exc:
+            print(f"\n  could not set it to run on its own: {exc}")
+            print("\n  Until that is sorted, start it by hand each time:")
+            print(f"    {invocation()} agent")
+            return 0
+    print()
     return 0
 
 
@@ -591,6 +606,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("link", help="link this PC to your cloud deployment")
     sp.add_argument("--url", required=True, help="https://your-app.onrender.com")
     sp.add_argument("--token", required=True, help="agent token from the Devices tab")
+    sp.add_argument("--no-autostart", action="store_true",
+                    help="link only; do not set the agent to run on its own")
     sp.set_defaults(func=cmd_link)
 
     sp = sub.add_parser("autostart",
