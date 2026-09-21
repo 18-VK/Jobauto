@@ -501,7 +501,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("web", help="local dashboard in your browser")
     sp.add_argument("--host", default="127.0.0.1",
                     help="bind address; set JOBAUTO_WEB_TOKEN before leaving localhost")
-    sp.add_argument("--port", type=int, default=5000)
+    # Not 5000: Windows reserves blocks of ports for Hyper-V/WinNAT and 5000 is
+    # very commonly in one. Flask appears to start, logs a socket permission
+    # error, and nothing listens -- which reads as the app being broken.
+    sp.add_argument("--port", type=int, default=5057)
     sp.add_argument("--debug", action="store_true")
     sp.set_defaults(func=cmd_web)
 

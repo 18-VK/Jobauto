@@ -173,3 +173,15 @@ def test_task_log_is_bounded():
 
 def test_unknown_pending_action_rejected(client):
     assert client.post("/api/pending/1/explode").status_code == 400
+
+
+def test_web_default_port_is_not_the_windows_reserved_one():
+    """Windows reserves blocks of TCP ports for Hyper-V/WinNAT and 5000 is very
+    commonly in one. Flask appears to start, logs a socket permission error, and
+    nothing listens -- which reads as the app being broken rather than as a port
+    clash. The README documents this default, so it has to be one that works."""
+    from jobauto.cli import build_parser
+
+    args = build_parser().parse_args(["web"])
+    assert args.port != 5000
+    assert args.port == 5057

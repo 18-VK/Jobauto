@@ -1,181 +1,323 @@
 # jobauto
 
-A job application assistant for Indian job portals — Naukri, LinkedIn, Indeed,
-Instahyre and Hirist.
+A job application assistant for Indian job portals — **Naukri, LinkedIn, Indeed,
+Instahyre and Hirist**.
 
-It searches the portals, scores every listing against your preferences, fills
-the application form, and then **stops and waits for you to press submit.**
+It searches the portals, scores every listing against your preferences, fills in
+the application form, and then **stops and waits for you to press submit**.
 
-Deploy it once and you get a private website with a login that you can open from
-your phone, your laptop, or anywhere else — **including when your PC is switched
-off.**
+Deploy it once and you get a private website with a login you can open from your
+phone or any laptop — **including when your PC is switched off**.
 
 ---
 
-## Using it from anywhere
+## Contents
 
-Two pieces, split deliberately by what each is allowed to hold:
+- [What it actually does](#what-it-actually-does)
+- [Why it never submits for you](#why-it-never-submits-for-you)
+- [Pick your setup](#pick-your-setup)
+- [Setup A — just this PC](#setup-a--just-this-pc) *(15 min)*
+- [Setup B — website you can use anywhere](#setup-b--website-you-can-use-anywhere) *(30 min)*
+- [Daily use](#daily-use)
+- [Configuring what it looks for](#configuring-what-it-looks-for)
+- [Command reference](#command-reference)
+- [Where your data lives](#where-your-data-lives)
+- [Troubleshooting](#troubleshooting)
+- [Adding a portal](#adding-a-portal)
+- [Known limits](#known-limits)
+
+---
+
+## What it actually does
+
+1. **Searches** each portal for every role you configured, using your logged-in
+   browser session
+2. **Scores** every result 0–100 against your preferences — title, skills,
+   experience, location, salary, company — and tells you *why* it scored that way
+3. **Filters out** the obvious nos: excluded keywords, blocked companies, stale
+   postings, roles wanting far more experience than you have
+4. **Fills in** the application on the portal, answering the screening questions
+   it can and leaving blank the ones it can't
+5. **Stops.** You check it and press submit yourself
+6. **Tracks** everything, so you never apply to the same job twice
+
+What it never does: submit an application, store a portal password, or guess at
+a screening question.
+
+## Why it never submits for you
+
+**Account safety.** Every one of these portals prohibits automated access in its
+terms. LinkedIn bans permanently, and your LinkedIn account *is* your
+professional presence — losing it costs far more than this saves. A human
+clicking submit is the single thing that makes the traffic look like a person.
+
+**It works better.** Mass auto-apply converts badly: recruiters and ATS filters
+spot generic applications. Twenty reviewed applications beat two hundred sprayed
+ones, and the review step is where you catch the job that read well in the
+listing and badly in the description.
+
+This takes an application from about six minutes down to about twenty seconds of
+your attention. That is the win — not removing you from the loop.
+
+Full reasoning, and what changes if you turn it off: [docs/RISKS.md](docs/RISKS.md).
+
+---
+
+## Pick your setup
+
+| | **A — just this PC** | **B — website, usable anywhere** |
+|---|---|---|
+| Setup time | ~15 min | ~30 min |
+| Accounts needed | none | GitHub + Render + Supabase (all free) |
+| Use from phone | no | yes |
+| Works with PC off | no | browse and queue work; applying resumes when it's on |
+| Where you run it | terminal or `localhost` | any browser, with a login |
+
+Both use the same engine. **B includes A** — you can start with A and move up
+later without redoing anything.
+
+---
+
+## Setup A — just this PC
+
+### A1. Install Python
+
+Needs **Python 3.10 or newer**. Check:
+
+```powershell
+python --version
+```
+
+Nothing, or older than 3.10? Install it — tick **"Add python.exe to PATH"**:
+
+```powershell
+winget install Python.Python.3.12
+```
+
+### A2. Get the code and install it
+
+```powershell
+git clone https://github.com/18-VK/Jobauto.git
+cd Jobauto
+pip install -e .
+python -m playwright install chromium
+```
+
+`pip install -e .` puts a `jobauto` command on your PATH. The Playwright step
+downloads the browser it drives — about 150 MB, once.
+
+### A3. Fill in your details
+
+```powershell
+copy config\profile.yaml config\profile.local.yaml
+copy config\preferences.yaml config\preferences.local.yaml
+```
+
+Edit **`config\profile.local.yaml`** — name, email, phone, current and expected
+CTC, notice period, your skills, and the canned answers to screening questions.
+
+Edit **`config\preferences.local.yaml`** — the roles you want, locations, salary
+floor, dealbreakers. [Details below](#configuring-what-it-looks-for).
+
+Both `.local.yaml` files are gitignored, so your real details never get committed.
+
+### A4. Add your resumes
+
+Put them in `resumes\`. One is enough:
+
+```
+resumes\base.docx        used when nothing else matches
+resumes\backend.docx     picked for backend / .NET / API roles
+resumes\fullstack.docx   picked for React / Node / MERN roles
+```
+
+Which variant gets used is set under `resume:` in your preferences.
+
+### A5. Check it
+
+```powershell
+jobauto doctor
+```
+
+Confirms your config parses, scoring weights sum to 1.0, and all five portals
+load. Fix anything it reports before continuing.
+
+### A6. Sign in to the portals
+
+```powershell
+jobauto login
+```
+
+A real browser opens, one portal at a time. **Sign in by hand**, OTP included.
+The session is saved, so this is once per portal.
+
+> **No password is ever stored by this project.** It keeps browser cookies,
+> exactly like your normal browser. That's also why MFA keeps working.
+
+### A7. Use it
+
+```powershell
+jobauto web
+```
+
+Opens a dashboard at `http://127.0.0.1:5057`. Or stay in the terminal —
+see [Daily use](#daily-use).
+
+**Setup A is done.**
+
+---
+
+## Setup B — website you can use anywhere
+
+Two pieces, split by what each is allowed to hold:
 
 ```
    ANY DEVICE                 CLOUD (free host)              YOUR PC
    ──────────                 ─────────────────              ───────
    phone, laptop,             permanent URL                  the agent
-   office machine     ──▶     email + password       ◀──     Playwright browser
+   office machine     ──▶     email + password       ◀──     the browser
                               jobs, scores                   your portal logins
                               preferences                    your resumes
                               task queue
                               ↑ never holds a portal login
 ```
 
-Your job-portal passwords and cookies **never leave your PC**. If the cloud
-database leaked tomorrow, nobody would gain access to a single job portal. That
-constraint is why the split exists at all.
+Your portal cookies **never leave your PC**. If the cloud database leaked
+tomorrow, nobody would gain access to a single job portal. The agent connects
+*outbound*, so nothing is exposed on your home network and no ports are opened.
 
-The agent connects **outbound** to the cloud, so nothing is exposed on your home
-network and there are no ports to forward.
+### B1. Database — Supabase (free, permanent)
 
-### What works with your PC off
+Render's own free Postgres **expires after 90 days and takes your data with it**.
+Supabase's free tier doesn't.
 
-| | PC off | PC on |
-|---|:---:|:---:|
-| Browse ranked jobs with score reasons | ✓ | ✓ |
-| Queue jobs to apply to | ✓ *(runs later)* | ✓ *(runs in ~1 min)* |
-| Edit preferences — roles, salary, locations | ✓ | ✓ |
-| Review and mark applications submitted | ✓ | ✓ |
-| Actually fill in applications | — | ✓ |
+1. [supabase.com](https://supabase.com) → **New project**
+2. Save the database password — it's shown once
+3. Region: **Mumbai (ap-south-1)** if you're in India
+4. Click **Connect** at the top → **Session pooler** tab → copy that string
 
-Queue five jobs from your phone on the train. They're filled in when you get
-home and open your laptop.
+It must look like this:
 
-### Try it before deploying
-
-```bash
-python -m jobauto cloud          # http://127.0.0.1:5058
+```
+postgresql://postgres.abcdefgh:PASSWORD@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
 ```
 
-Same app, same login, running on your machine. First visit creates your account.
+> **Three strings are offered and two of them will not work.** The **direct**
+> one (`db.<ref>.supabase.co`) is IPv6-only and Render cannot reach it at all.
+> The username must be `postgres.` **plus your project ref**, and the host must
+> end in `pooler.supabase.com`.
+>
+> Use letters and digits in the password. An `@` or `#` breaks URL parsing.
 
-### Then deploy it
+Check it before going further — the password stays masked, so the output is safe
+to share:
 
 ```powershell
-.\push-to-github.ps1             # private repo, one browser sign-in
+python scripts\check_db_url.py "<your-string>" --connect
 ```
 
-Once it's up, any PC joins with a single command — no repo, no setup:
+### B2. Push the code to GitHub
 
 ```powershell
-irm https://your-app.onrender.com/install.ps1 | iex
+.\push-to-github.ps1
 ```
 
-Then <https://render.com> → **New → Blueprint** → pick the repo → **Apply**.
-Render reads [render.yaml](render.yaml), creates the web service and a free
-Postgres, and hands you a permanent URL.
+One browser sign-in, then it creates a private repo and pushes.
 
-Full walkthrough: **[docs/DEPLOY.md](docs/DEPLOY.md)** — about ten minutes.
+### B3. Deploy on Render
+
+1. [render.com](https://render.com) → **Sign up with GitHub**. No card needed
+2. **New → Blueprint** → pick your repo
+3. It asks for `DATABASE_URL` — paste the Supabase session-pooler string
+4. **Apply**, then wait about 5 minutes
+
+Render shows **your** URL at the top, something like
+`https://jobauto-a1b2.onrender.com`. That address is permanent.
+
+> Free instances sleep after ~15 minutes idle and take ~30 seconds to wake. The
+> agent retries automatically, so this costs you a slow first page load.
+
+### B4. Create your account
+
+Open your URL → **Create one** (or go to `/signup`). **The first account on a
+fresh deployment is the owner**, and signups close behind it, so nobody who
+finds the URL can register.
+
+### B5. Link your PC
+
+Open **Devices** in the dashboard and copy the command. On the machine that will
+do the applying:
+
+```powershell
+irm https://<YOUR-URL>/install.ps1 | iex
+```
+
+That needs **nothing but Python 3.10+** — no repo, no clone, no setup. It
+creates a private environment under `~\.jobauto`, installs the agent and a
+browser, asks for your token, links the machine, and offers to start at login.
+
+Then, on that machine:
+
+```powershell
+jobauto login      # sign in to each portal by hand, once
+jobauto agent      # start syncing — leave it running
+```
+
+The dot in the dashboard header turns green.
+
+**Setup B is done.** Open your URL from anywhere.
+
+### Optional: password reset emails
+
+Without SMTP, reset links go to your Render log (search `JOBAUTO_RESET_LINK`).
+For real emails, add these under Render → **Environment** — Gmail works with an
+[app password](https://myaccount.google.com/apppasswords):
+
+| Variable | Example |
+|---|---|
+| `SMTP_HOST` | `smtp.gmail.com` |
+| `SMTP_PORT` | `587` |
+| `SMTP_USER` | `you@gmail.com` |
+| `SMTP_PASSWORD` | your 16-character app password |
+
+Locked out entirely? Set a password straight against the database:
+
+```powershell
+$env:DATABASE_URL = "<your-supabase-url>"
+python scripts\reset_password.py --email you@example.com --password "a-new-one"
+```
 
 ---
 
-## Why it stops before submitting
-
-Two reasons, both practical.
-
-**Account safety.** Every one of these portals prohibits automated access in its
-terms. LinkedIn in particular bans permanently, and your LinkedIn account *is*
-your professional presence — losing it costs far more than the time this saves.
-A human clicking submit is the single thing that makes the traffic look like a
-person using the site.
-
-**It works better.** Mass auto-apply converts badly. Recruiters and ATS filters
-spot generic applications. Twenty reviewed applications beat two hundred sprayed
-ones, and the review step is where you catch the job that looked great in the
-listing and terrible in the JD.
-
-The automation takes an application from roughly six minutes to about twenty
-seconds of your attention. That is the win — not removing you from the loop.
-
-See [docs/RISKS.md](docs/RISKS.md) before changing `auto_submit`.
-
-## Setup
-
-```bash
-pip install -r requirements.txt
-python -m playwright install chromium
-```
-
-Copy the config templates and fill in your details:
-
-```bash
-cp config/profile.yaml config/profile.local.yaml
-cp config/preferences.yaml config/preferences.local.yaml
-```
-
-Edit `config/profile.local.yaml` — name, email, phone, CTC, notice period,
-skills, and your canned screening answers. Then edit
-`config/preferences.local.yaml` — the roles you want, locations, salary floor,
-and dealbreakers. Both `.local.yaml` files are gitignored.
-
-Drop your resumes in `resumes/` (see `resumes/README.md` for the variants).
-
-Check everything loads:
-
-```bash
-PYTHONPATH=src python -m jobauto doctor
-```
-
-Sign in to each portal once. A real browser window opens; you log in by hand,
-including any OTP. The session is saved, so this is a one-time chore per portal.
-
-```bash
-PYTHONPATH=src python -m jobauto login
-```
-
-**No passwords are stored anywhere in this project.** It keeps browser cookies,
-the same way your normal browser does.
-
-## Three ways to run it
-
-| Mode | Command | Good for |
-|---|---|---|
-| **Cloud** | deploy + `jobauto agent` | A real website with a login that works when your PC is off. See [docs/DEPLOY.md](docs/DEPLOY.md) |
-| **Local dashboard** | `jobauto web` | Browser UI, nothing hosted, no account |
-| **Terminal** | `jobauto discover` / `apply` | Scripting and quick runs |
-
-All three drive the same engine. Cloud mode adds a hosted dashboard and a local
-agent; the applying always happens on your PC.
-
 ## Daily use
 
-Either the dashboard or the terminal — both drive the same engine and the same
-database.
+### In the dashboard
 
-### Dashboard
+**Jobs** — everything found, ranked, with the reasons it scored that way. Filter
+by score, portal, or how recently it was posted. **Queue to apply** on anything
+you like.
 
-```bash
-python -m jobauto web             # http://127.0.0.1:5057
+**Applications** — split into *Waiting for you* and *Done*. Each pending one
+shows what was auto-answered and what was deliberately left blank. Open it,
+check it, submit it on the portal, then mark it here.
+
+**Preferences** — quick filters plus the raw YAML. Validated before saving; a
+broken config is rejected, not written.
+
+**Devices** — your agent's status, the install command, and database cleanup.
+
+Buttons relabel themselves when your PC is offline (*Search portals* → *Queue a
+search*), so it's never ambiguous what will happen.
+
+### In the terminal
+
+```powershell
+jobauto discover          # search every portal, score everything
+jobauto shortlist --why   # the ranking, and the reasons behind it
+jobauto apply --limit 5   # fill 5 applications, prompting before each
 ```
 
-Ranked shortlist with the score breakdown on each card, a Pending tab for
-applications that are filled but not sent, and a Preferences tab that validates
-your YAML before saving (a config that fails validation is rejected, not
-written). Discover and Prepare run from the buttons, with live output in
-Activity.
-
-To reach it from your phone or another machine, see
-[docs/HOSTING.md](docs/HOSTING.md) — a Cloudflare Tunnel is free and keeps the
-engine on your machine, which matters more than it sounds. Set
-`JOBAUTO_WEB_TOKEN` before exposing it; the page shows your phone number, salary
-and full application history.
-
-### Terminal
-
-```bash
-python -m jobauto discover        # search every portal, score everything
-python -m jobauto shortlist --why # see the ranking and why each job ranked there
-python -m jobauto apply --limit 5 # fill 5 applications, prompting before each
-```
-
-`apply` opens each job, fills the form, answers the screening questions it can,
-and then shows you this:
+`apply` shows you this before anything is sent:
 
 ```
 ========================================================================
@@ -206,38 +348,73 @@ and then shows you this:
   [s]ubmit  [k]skip  [o]pen in browser  [q]uit >
 ```
 
-Quit whenever you like — anything already filled is saved, and
-`python -m jobauto review` lists it again later.
+Quit whenever — anything already filled is saved, and `jobauto review` lists it
+again later.
+
+### A free win
+
+Naukri ranks profiles by recency, so recruiters see recently-updated ones first.
+
+```powershell
+jobauto refresh
+```
+
+Re-saves your headline unchanged, which Naukri counts as an update. Your own
+account acting on itself — no grey area, and it measurably lifts inbound.
+
+---
 
 ## Configuring what it looks for
 
-Everything lives in `config/preferences.local.yaml`. Nothing about roles or
-skills is hardcoded.
+Everything lives in `config\preferences.local.yaml`, or the **Preferences** tab
+if you deployed. Nothing about roles or skills is hardcoded.
+
+### Roles
 
 ```yaml
 search:
   roles:
     - title: "Backend Developer"
-      weight: 1.0                    # bias the score for this role
+      weight: 1.0                      # bias the score for this role
       aliases: ["Backend Engineer", "API Developer"]
+    - title: ".NET Developer"
+      weight: 1.0
+      aliases: ["Dotnet Developer", "C# Developer"]
+```
 
+Each role becomes a separate search on every portal. `aliases` catch the same
+job under a different name.
+
+### Filters
+
+```yaml
   keywords:
-    exclude: ["intern", "bpo"]       # these drop a job outright
-
-  posting:
-    max_age_days: 7                  # only jobs posted in the last week
+    include: ["REST API", "microservices"]    # boost the score
+    exclude: ["intern", "bpo", "night shift"] # drop the job outright
 
   locations:
-    preferred: ["Noida", "Remote"]
+    preferred: ["Noida", "Delhi NCR", "Remote"]
+    acceptable: ["Bangalore", "Pune"]         # counted, but lower
     blocked: ["Chennai"]
+    work_mode: ["remote", "hybrid", "onsite"]
 
   compensation:
     expected_ctc_lpa: 14.0
-    minimum_acceptable_lpa: 11.0     # below this gets heavily down-ranked
+    minimum_acceptable_lpa: 11.0              # below this is heavily down-ranked
+
+  experience:
+    current_years: 3.5
+
+  posting:
+    max_age_days: 7                           # only jobs posted in the last week
 ```
 
-Scoring weights are yours to tune — they must sum to 1.0 and `doctor` will tell
-you if they don't:
+`max_age_days` is used twice: sent to the portal so stale listings are never
+fetched, and applied exactly by the scorer.
+
+### Scoring weights
+
+Must sum to 1.0 — `doctor` tells you if they don't:
 
 ```yaml
 scoring:
@@ -248,15 +425,140 @@ scoring:
     location_fit: 0.15
     compensation_fit: 0.10
     company_quality: 0.05
+
+thresholds:
+  shortlist: 60      # below this, never shown
+  priority: 85       # flagged as a top pick
 ```
 
-If everything is scoring too low, lower `thresholds.shortlist` rather than
-inflating weights.
+Everything scoring too low? Lower `thresholds.shortlist` rather than inflating
+weights.
+
+### Screening answers
+
+In `profile.local.yaml`. Answered once, reused everywhere:
+
+```yaml
+screening_answers:
+  - match: ["notice period", "when can you join"]
+    answer: "60 days (negotiable)"
+  - match: ["expected ctc", "expected salary"]
+    answer: "14 LPA"
+
+never_auto_answer:          # always escalated to you, whatever else matches
+  - "aadhaar"
+  - "pan number"
+  - "bank"
+```
+
+Anything unmatched is **left blank and flagged**, never guessed. A wrong
+screening answer on record is worse than no application.
+
+### Automatic cleanup
+
+Keeps a free database small. Runs twice a day:
+
+```yaml
+retention:
+  jobs_days: 7             # jobs you never acted on
+  tasks_days: 7            # finished run history
+  applications_days: 0     # 0 = keep your history forever
+```
+
+Never removed at any age: applications waiting on you, jobs queued to apply,
+tasks still running.
+
+---
+
+## Command reference
+
+| Command | What it does |
+|---|---|
+| `jobauto doctor` | Validate config. No browser. Run this first, always |
+| `jobauto login` | Sign in to each portal by hand, once |
+| `jobauto discover` | Search and score. Applies to nothing |
+| `jobauto shortlist --why` | Ranked list with reasons |
+| `jobauto apply --limit 5` | Fill applications, prompting before each |
+| `jobauto apply --dry-run` | Show what it would apply to, touch nothing |
+| `jobauto review` | Anything prepared but not sent |
+| `jobauto refresh` | Daily Naukri profile touch |
+| `jobauto stats` | Application history summary |
+| `jobauto web` | Local dashboard on `127.0.0.1:5057` |
+| `jobauto link --url U --token T` | Link this PC to your deployment |
+| `jobauto agent` | Run the sync agent — keep it running |
+| `jobauto cloud` | Run the hosted app locally, to try it |
+| `jobauto export-session` | Copy your portal logins to another machine |
+| `jobauto import-session --file F` | Restore logins exported elsewhere |
+
+Most accept `--portal naukri` (repeatable) and `--headless`.
+
+### Helper scripts
+
+| Script | Purpose |
+|---|---|
+| `scripts\check_db_url.py "<url>" --connect` | Explain a database URL; password stays masked |
+| `scripts\migrate_db.py --from A --to B` | Copy a database between servers |
+| `scripts\reset_password.py --email X --password Y` | Set a password directly |
+| `.\push-to-github.ps1` | Create the private repo and push |
+| `.\start-dashboard.ps1` | Local dashboard + a public tunnel |
+
+---
+
+## Where your data lives
+
+**From a checkout:**
+
+```
+config\*.local.yaml     your details and preferences
+data\jobauto.db         every job seen, every application made
+data\browser\<portal>\  your logged-in sessions, one per portal
+resumes\                your resume files
+```
+
+**Installed via the one-liner:** the same, under `~\.jobauto\`.
+
+All of it is gitignored. `data\browser\` holds live session cookies — never
+commit or share that folder.
+
+---
+
+## Troubleshooting
+
+**`jobauto` isn't recognised** — the install didn't finish, or PATH hasn't
+refreshed. Reopen PowerShell, or use `python -m jobauto` from a checkout.
+
+**Port 5000 fails / nothing listens** — Windows reserves it (Hyper-V). Defaults
+here avoid it. Check yours:
+`netsh interface ipv4 show excludedportrange protocol=tcp`
+
+**`discover` finds nothing** — run `jobauto doctor`. If a portal says
+`LoginRequired`, run `jobauto login` again. Portal selectors change; see
+[Known limits](#known-limits).
+
+**Dashboard says "no PC linked"** — the agent isn't running. Start
+`jobauto agent` on that machine.
+
+**`agent token rejected`** — it was rotated. Re-run `jobauto link` with the new one.
+
+**Render deploy exits with status 3, no traceback** — the database is
+unreachable and the worker was killed on boot timeout. Almost always the
+IPv6-only direct Supabase host. Current builds print a `DATABASE UNREACHABLE`
+block naming the cause.
+
+**`password authentication failed for user "postgres"`** — the pooler needs
+`postgres.<project-ref>`, not bare `postgres`.
+
+**`failed to resolve host '<text>@aws-0-...'`** — your password contains an `@`.
+Percent-encode it as `%40`, or reset it to letters and digits.
+
+More: [docs/DATABASE.md](docs/DATABASE.md) and [docs/DEPLOY.md](docs/DEPLOY.md).
+
+---
 
 ## Adding a portal
 
-Two steps. Copy `config/portals/hirist.yaml`, point the selectors at the new
-site, and set `adapter: "jobauto.portals.yourportal:YourPortalAdapter"`. Then:
+Copy `config\portals\hirist.yaml`, point the selectors at the new site, set
+`adapter: "jobauto.portals.yourportal:YourPortalAdapter"`, then:
 
 ```python
 from .generic import ConfigDrivenAdapter
@@ -265,45 +567,60 @@ class YourPortalAdapter(ConfigDrivenAdapter):
     """Standard search/apply shape -- nothing to override."""
 ```
 
-That is genuinely the whole adapter if the portal uses the ordinary
-"search page → result cards → apply button" layout. Searching, pagination,
-detail fetching, pacing, daily caps, dedupe and the review gate are all
-inherited. Override a method only where the portal actually differs — see
-`naukri.py` for a chatbot flow or `linkedin.py` for a multi-step wizard.
+That's the whole adapter for any portal with the ordinary "search page → result
+cards → apply button" layout. Search, pagination, detail fetching, pacing, daily
+caps, dedupe and the review gate are all inherited.
 
-## A free win
+Every CSS selector lives in YAML, so a portal redesign is a config edit rather
+than a code change. Override a method only where a portal genuinely differs —
+see `naukri.py` for a chatbot flow, `linkedin.py` for a multi-step wizard.
 
-Naukri ranks profiles by recency, so recruiters see recently-updated profiles
-first. `python -m jobauto refresh` re-saves your headline unchanged, which
-Naukri counts as an update. Your own account acting on itself — no grey area,
-and it measurably lifts inbound.
+---
+
+## Known limits
+
+- **Portal selectors are best-effort and unverified against the live sites.**
+  Expect to fix some on first run. They're all in YAML, so it's a one-line edit.
+  If `login` can't confirm a sign-in you actually completed, the
+  `auth.logged_in_selector` for that portal is stale.
+- **Resume tailoring is configured but not implemented.** `pick_resume` selects
+  a pre-written variant by keyword; it does not rewrite anything.
+- **The daily digest is configured but not implemented.**
+- **Instahyre is a feed, not a search**, so role queries don't apply to it —
+  your preferences still filter what it returns.
+
+---
 
 ## Tests
 
-```bash
+```powershell
 python -m pytest -q      # 278 tests, no browser or network required
 ```
+
+Covers scoring and parsing, config validation, screening answers, the full
+discover→score→dedupe→shortlist flow, the local and cloud APIs, the agent sync
+protocol including cross-account isolation, database migration, retention, and
+the installer.
 
 ## Layout
 
 ```
 config/
-  preferences.yaml       roles, scoring weights, thresholds, caps
+  preferences.yaml       roles, scoring weights, thresholds, caps, retention
   profile.yaml           your details and canned screening answers
   portals/*.yaml         one file per portal: selectors and URLs
 src/jobauto/
   scoring.py             preference-driven ranking
   pipeline.py            discover -> score -> prepare -> review -> submit
   review.py              the human gate
-  browser.py             persistent login sessions, no stored passwords
+  browser.py             persistent logins, no stored passwords
   forms.py               screening answers, resume selection
   portals/               one adapter per portal
-  web/                   local dashboard (Flask + vanilla JS, no build step)
-  cloud/                 hosted app: login, sync API, task queue
-  agent/                 local agent that polls the cloud and runs the work
-data/jobauto.db          every job seen, every application made (gitignored)
-docs/RISKS.md            account-ban tradeoffs; read before enabling auto-submit
-docs/HOSTING.md          tunnelling the local dashboard, for free
-docs/DEPLOY.md           deploying the cloud app with a permanent URL
-Dockerfile, render.yaml  one-click deploy on Render's free tier
+  web/                   local dashboard
+  cloud/                 hosted app: login, sync API, task queue, installer
+  agent/                 local agent: polls the cloud, runs the work
+docs/DEPLOY.md           deploying with a permanent URL
+docs/DATABASE.md         Supabase migration and connection strings
+docs/RISKS.md            account-ban tradeoffs
+docs/HOSTING.md          tunnelling the local dashboard instead
 ```
