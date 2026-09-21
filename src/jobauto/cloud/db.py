@@ -80,7 +80,17 @@ class Agent(Base):
 
     @staticmethod
     def new_token() -> str:
-        return secrets.token_urlsafe(32)
+        """URL-safe, and never starting with '-'.
+
+        token_urlsafe uses the base64url alphabet, so about one token in sixty
+        begins with a hyphen -- and a command line argument beginning with '-'
+        is read as an option name, not a value. Callers should still pass it as
+        --token=VALUE, but not minting the problem in the first place is free.
+        """
+        while True:
+            token = secrets.token_urlsafe(32)
+            if not token.startswith("-"):
+                return token
 
 
 # ------------------------------------------------------------------- jobs

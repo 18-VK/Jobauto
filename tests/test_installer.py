@@ -153,3 +153,47 @@ def test_hints_match_how_it_was_launched(monkeypatch, argv0, expected):
 
     monkeypatch.setattr(sys, "argv", [argv0])
     assert invocation() == expected
+
+
+# ------------------------------------------- failure handling in the script
+def test_installer_never_calls_bare_exit():
+    """Run through `irm ... | iex` the script shares the window's session, so
+    `exit` closes the window -- taking the error with it, at exactly the moment
+    you need to read it."""
+    import re
+    script = installer.installer_script("https://x.example")
+    bare = [l for l in script.splitlines() if re.match(r"^\s*exit \d", l)]
+    assert not bare, bare
+    assert "function Finish" in script
+    assert "Press Enter to close" in script
+
+
+def test_installer_passes_the_token_with_an_equals_sign():
+    """A token starting with '-' is read as an option name when passed as
+    `--token VALUE`; `--token=VALUE` is unambiguous."""
+    script = installer.installer_script("https://x.example")
+    assert '--token="$token"' in script
+    assert "--token $token" not in script
+
+
+def test_installer_validates_the_token_before_linking():
+    script = installer.installer_script("https://x.example")
+    assert "/api/agent/hello" in script
+    assert "401" in script
+    assert "sign up first" in script
+
+
+def test_generated_tokens_never_start_with_a_hyphen():
+    """About one token in sixty otherwise would, and that one breaks any
+    caller that passes it as a separate argument."""
+    from jobauto.cloud.db import Agent
+    tokens = [Agent.new_token() for _ in range(2000)]
+    assert not any(t.startswith("-") for t in tokens)
+    assert all(len(t) > 30 for t in tokens)
+
+
+@pytest.mark.parametrize("token", ["-leadingdash123", "_leadingunderscore1", "normaltoken123"])
+def test_cli_accepts_any_token_via_equals_form(token):
+    from jobauto.cli import build_parser
+    args = build_parser().parse_args(["link", "--url=https://x", f"--token={token}"])
+    assert args.token == token

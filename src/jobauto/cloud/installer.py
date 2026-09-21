@@ -105,6 +105,20 @@ _INSTALLER = r"""
 
 $ErrorActionPreference = 'Stop'
 $Base = '__BASE_URL__'
+
+# Run via `irm ... | iex` the script shares the window's session, so `exit`
+# closes the window -- taking the error message with it, which is exactly when
+# you need to read it. Everything ends through here instead.
+function Finish([int]$code = 0) {
+    Write-Host ''
+    if ($code -ne 0) {
+        Write-Host '  Nothing was linked. The messages above explain why.' -ForegroundColor Yellow
+    }
+    Write-Host '  Press Enter to close.' -ForegroundColor DarkGray
+    try { [void](Read-Host) } catch { }
+    if ($MyInvocation.MyCommand.CommandType -eq 'ExternalScript') { exit $code }
+    return
+}
 $Home_ = Join-Path $env:USERPROFILE '.jobauto'
 $Venv  = Join-Path $Home_ 'venv'
 $Py    = Join-Path $Venv 'Scripts\python.exe'
@@ -136,7 +150,7 @@ if (-not $python) {
     Write-Host '  "Add python.exe to PATH", then run this installer again.'
     Write-Host ''
     Write-Host '  Or:  winget install Python.Python.3.12'
-    exit 1
+    Finish 1
 }
 
 # ------------------------------------------------------------ environment
@@ -145,7 +159,7 @@ New-Item -ItemType Directory -Force -Path $Home_ | Out-Null
 if (-not (Test-Path $Py)) {
     Write-Host '  creating a private environment ...'
     & $python -m venv $Venv
-    if ($LASTEXITCODE -ne 0) { Write-Host '  could not create it.' -ForegroundColor Red; exit 1 }
+    if ($LASTEXITCODE -ne 0) { Write-Host '  could not create it.' -ForegroundColor Red; Finish 1 }
 }
 
 Write-Host '  downloading the agent ...'
@@ -158,7 +172,7 @@ Expand-Archive -Path $zip -DestinationPath $dir -Force
 Write-Host '  installing (this pulls in Playwright, ~1-2 minutes) ...'
 & $Py -m pip install --quiet --upgrade pip
 & $Py -m pip install --quiet (Join-Path $dir 'jobauto-agent')
-if ($LASTEXITCODE -ne 0) { Write-Host '  install failed.' -ForegroundColor Red; exit 1 }
+if ($LASTEXITCODE -ne 0) { Write-Host '  install failed.' -ForegroundColor Red; Finish 1 }
 
 Write-Host '  downloading a browser for the automation ...'
 & $Py -m playwright install chromium
@@ -170,11 +184,59 @@ if ($LASTEXITCODE -ne 0) {
 # ------------------------------------------------------------------ link
 Write-Host ''
 Write-Host '  Paste the agent token from your dashboard (Devices tab).' -ForegroundColor Cyan
-$token = Read-Host '  token'
-if (-not $token) { Write-Host '  no token given; run the installer again when you have it.'; exit 1 }
+Write-Host '  Sign in, open Devices, and use the Copy token button.' -ForegroundColor DarkGray
+$token = (Read-Host '  token').Trim()
 
-& $Exe link --url $Base --token $token.Trim()
-if ($LASTEXITCODE -ne 0) { Write-Host '  linking failed.' -ForegroundColor Red; exit 1 }
+if (-not $token) {
+    Write-Host ''
+    Write-Host '  No token given. Get one from Devices and run the installer again.' -ForegroundColor Yellow
+    Finish 1
+}
+
+# Check the token against the API before handing it to the CLI, so a bad token
+# produces a plain sentence instead of a stack trace.
+Write-Host '  checking the token ...'
+$ok = $false
+try {
+    $probe = Invoke-WebRequest -Uri "$Base/api/agent/hello" -Method POST `
+        -Headers @{ 'X-Agent-Token' = $token } `
+        -ContentType 'application/json' -Body '{"status":"installing"}' `
+        -UseBasicParsing -TimeoutSec 30
+    $ok = ($probe.StatusCode -eq 200)
+} catch {
+    $code = $_.Exception.Response.StatusCode.value__
+    if ($code -eq 401) {
+        Write-Host ''
+        Write-Host '  That token was rejected by the server.' -ForegroundColor Red
+        Write-Host ''
+        Write-Host '  Usually one of:' -ForegroundColor DarkGray
+        Write-Host '    - it was copied partially; use the Copy token button rather than' -ForegroundColor DarkGray
+        Write-Host '      selecting it by hand' -ForegroundColor DarkGray
+        Write-Host '    - it was rotated since you copied it; open Devices and copy again' -ForegroundColor DarkGray
+        Write-Host '    - you have not created an account on the site yet, so no token' -ForegroundColor DarkGray
+        Write-Host "      exists -- open $Base and sign up first" -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Host "  token received: $($token.Length) characters, starts '$($token.Substring(0, [Math]::Min(6, $token.Length)))'" -ForegroundColor DarkGray
+        Finish 1
+    }
+    Write-Host ''
+    Write-Host "  Could not reach $Base : $($_.Exception.Message)" -ForegroundColor Red
+    Finish 1
+}
+
+if (-not $ok) { Write-Host '  the server did not accept the token.' -ForegroundColor Red; Finish 1 }
+Write-Host '  token accepted.' -ForegroundColor Green
+
+# --token=VALUE, not --token VALUE: a token beginning with '-' would otherwise
+# be read as an option name rather than a value.
+& $Exe link --url="$Base" --token="$token"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ''
+    Write-Host '  Linking failed even though the token was accepted.' -ForegroundColor Red
+    Write-Host '  The error above is from the agent. Try it again by hand:' -ForegroundColor DarkGray
+    Write-Host "    $Exe link --url=`"$Base`" --token=`"<your token>`"" -ForegroundColor DarkGray
+    Finish 1
+}
 
 # -------------------------------------------------------------- autostart
 Write-Host ''
@@ -201,5 +263,5 @@ Write-Host '  Then start syncing:'
 Write-Host "    $Exe agent" -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  Everything lives in ~/.jobauto -- delete that folder to remove it all.' -ForegroundColor DarkGray
-Write-Host ''
+Finish 0
 """
