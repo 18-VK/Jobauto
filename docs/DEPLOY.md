@@ -55,8 +55,10 @@ Private is fine — Render reads private repos once you connect your GitHub acco
 
 1. Sign up at [render.com](https://render.com) with GitHub. No card.
 2. **New → Blueprint**, pick your `jobauto` repo.
-3. Render reads [render.yaml](../render.yaml) and creates a web service plus a
-   free Postgres database. Click **Apply**.
+3. Render reads [render.yaml](../render.yaml) and creates the web service.
+   It will prompt for `DATABASE_URL` -- paste your Supabase session-pooler
+   string (see **[DATABASE.md](DATABASE.md)**, two minutes to set up). Click
+   **Apply**.
 4. Wait ~5 minutes for the first build.
 
 Render then shows **your** URL at the top of the service page — something like
@@ -203,7 +205,7 @@ there is nothing to recover — reset is the only route, by design.
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | Postgres URL. Absent → SQLite at `cloud.db` |
+| `DATABASE_URL` | Postgres URL. Absent → SQLite at `cloud.db`. For Supabase use the **session pooler** string — see [DATABASE.md](DATABASE.md) |
 | `SECRET_KEY` | Signs session cookies. **Rotating it logs everyone out** |
 | `JOBAUTO_ALLOW_SIGNUP` | `1` opens signup beyond the first account |
 | `JOBAUTO_SIGNUP_CODE` | Invite code required when signup is open |

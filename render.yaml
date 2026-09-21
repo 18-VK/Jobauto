@@ -1,6 +1,8 @@
 # One-click deploy on Render's free tier.
 #   1. push this repo to GitHub
 #   2. Render dashboard -> New -> Blueprint -> pick the repo
+#   3. set DATABASE_URL yourself (see below)
+#
 # Free instances sleep after ~15 min idle and take ~30s to wake. The agent
 # retries with backoff, so a sleeping instance is not a problem.
 services:
@@ -16,13 +18,24 @@ services:
         value: "0"                   # only the first account can be created
       - key: JOBAUTO_HTTPS
         value: "1"
-      - key: DATABASE_URL
-        fromDatabase:
-          name: jobauto-db
-          property: connectionString
 
-databases:
-  - name: jobauto-db
-    plan: free
-    databaseName: jobauto
-    user: jobauto
+      # Set this in the Render dashboard, not here -- it is a credential and
+      # does not belong in the repo. `sync: false` tells Render to prompt for
+      # it on first deploy and then leave it alone.
+      #
+      # Supabase: use the SESSION POOLER string, which looks like
+      #   postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+      # NOT the direct db.<ref>.supabase.co host -- that is IPv6-only and
+      # Render cannot reach it. See docs/DATABASE.md.
+      - key: DATABASE_URL
+        sync: false
+
+# Render's own free Postgres is deliberately not used: it expires 90 days after
+# creation and takes your data with it. Supabase's free tier does not expire.
+# Migration instructions: docs/DATABASE.md
+#
+# databases:
+#   - name: jobauto-db
+#     plan: free
+#     databaseName: jobauto
+#     user: jobauto

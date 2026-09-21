@@ -834,3 +834,27 @@ def test_reopen_puts_it_back_in_pending(client):
     assert client.post(f"/api/applications/{app_id}/reopen").status_code == 200
     assert _status(client) == "prepared"
     assert client.get("/api/summary").get_json()["counts"]["pending"] == 1
+
+
+# ===================================================== connection handling
+@pytest.mark.parametrize("url,expected", [
+    # Supabase transaction pooler: pgBouncer, no prepared statements.
+    ("postgresql://u:p@aws-0-ap-south-1.pooler.supabase.com:6543/postgres", True),
+    ("postgresql://u:p@host/db?pgbouncer=true", True),
+    # Session pooler and direct connections handle prepared statements fine.
+    ("postgresql://u:p@aws-0-ap-south-1.pooler.supabase.com:5432/postgres", False),
+    ("postgresql://u:p@db.abcdefgh.supabase.co:5432/postgres", False),
+    ("postgresql://u:p@dpg-xyz.oregon-postgres.render.com/jobauto", False),
+    ("sqlite:///cloud.db", False),
+])
+def test_transaction_pooler_detection(url, expected):
+    assert clouddb.is_transaction_pooler(url) is expected
+
+
+def test_supabase_url_is_normalised(monkeypatch):
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://postgres.abc:pw@aws-0-ap-south-1.pooler.supabase.com:5432/postgres")
+    url = clouddb.database_url()
+    assert url.startswith("postgresql+psycopg://")
+    assert "pooler.supabase.com:5432" in url

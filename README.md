@@ -272,7 +272,7 @@ and it measurably lifts inbound.
 ## Tests
 
 ```bash
-python -m pytest -q      # 121 tests, no browser or network required
+python -m pytest -q      # 198 tests, no browser or network required
 ```
 
 ## Layout

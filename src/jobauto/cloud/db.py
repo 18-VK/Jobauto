@@ -202,12 +202,30 @@ def database_url() -> str:
     if not url:
         path = os.environ.get("JOBAUTO_CLOUD_DB", "cloud.db")
         return f"sqlite:///{path}"
-    # Render and Heroku hand out postgres:// which SQLAlchemy 2 rejects.
+    # Render, Heroku and Supabase all hand out postgres:// or postgresql://,
+    # and SQLAlchemy 2 rejects the former outright.
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql+psycopg://", 1)
     elif url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
+
+
+def is_transaction_pooler(url: str) -> bool:
+    """Supabase offers three connection strings and they are not interchangeable.
+
+      - direct (db.<ref>.supabase.co:5432) is IPv6-only on new projects, so it
+        simply cannot be reached from an IPv4-only host like Render
+      - session pooler (pooler.supabase.com:5432) is IPv4 and behaves like an
+        ordinary Postgres connection -- this is the one to use
+      - transaction pooler (pooler.supabase.com:6543) is pgBouncer in
+        transaction mode, which does NOT support prepared statements
+
+    psycopg3 prepares statements automatically after a few executions, so on
+    the transaction pooler you get 'prepared statement "_pg3_0" already exists'
+    once traffic warms up. Detect it and turn preparation off.
+    """
+    return ":6543" in url or "pgbouncer=true" in url.lower()
 
 
 # Arbitrary but fixed: every worker must ask for the same lock for it to work.
@@ -248,6 +266,12 @@ def init_engine(url: str | None = None, echo: bool = False):
         # recycle before the provider's idle timeout kills a connection.
         kwargs.update(pool_size=3, max_overflow=2, pool_pre_ping=True,
                       pool_recycle=280)
+        if is_transaction_pooler(url):
+            # pgBouncer in transaction mode hands you a different backend per
+            # transaction, so a prepared statement from one is meaningless to
+            # the next. Turning preparation off is the supported fix.
+            kwargs["connect_args"] = {"prepare_threshold": None}
+            kwargs["pool_recycle"] = 120
     _engine = create_engine(url, **kwargs)
     _Session = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
     create_schema(_engine)
