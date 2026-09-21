@@ -197,3 +197,14 @@ def test_cli_accepts_any_token_via_equals_form(token):
     from jobauto.cli import build_parser
     args = build_parser().parse_args(["link", "--url=https://x", f"--token={token}"])
     assert args.token == token
+
+
+def test_autostart_falls_back_to_the_startup_folder():
+    """Register-ScheduledTask needs elevation on many machines and fails with
+    'Access is denied'. A Startup-folder shortcut is per-user and needs none."""
+    script = installer.installer_script("https://x.example")
+    assert "Register-ScheduledTask" in script
+    assert "GetFolderPath('Startup')" in script
+    assert "WScript.Shell" in script
+    # And if both routes fail, it must still say how to start it by hand.
+    assert "Start it by hand instead" in script

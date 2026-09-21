@@ -242,14 +242,44 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ''
 $auto = Read-Host '  Start the agent automatically when you log in? (y/N)'
 if ($auto -match '^[Yy]') {
+    $registered = $false
+
+    # Preferred, but Register-ScheduledTask needs elevation on many machines
+    # and fails with "Access is denied" without it.
     try {
         $action  = New-ScheduledTaskAction -Execute $Exe -Argument 'agent'
         $trigger = New-ScheduledTaskTrigger -AtLogOn
         Register-ScheduledTask -TaskName 'jobauto-agent' -Action $action `
             -Trigger $trigger -Force -Description 'jobauto cloud sync agent' | Out-Null
-        Write-Host '  registered. It will start at every login.' -ForegroundColor Green
-    } catch {
-        Write-Host "  could not register the task: $_" -ForegroundColor Yellow
+        Write-Host '  registered as a scheduled task -- starts at every login.' -ForegroundColor Green
+        $registered = $true
+    } catch { }
+
+    # A shortcut in the Startup folder is per-user and needs no privileges, so
+    # it works where the scheduler does not.
+    if (-not $registered) {
+        try {
+            $startup = [Environment]::GetFolderPath('Startup')
+            $link = Join-Path $startup 'jobauto-agent.lnk'
+            $shell = New-Object -ComObject WScript.Shell
+            $shortcut = $shell.CreateShortcut($link)
+            $shortcut.TargetPath = $Exe
+            $shortcut.Arguments = 'agent'
+            $shortcut.WorkingDirectory = $Home_
+            $shortcut.Description = 'jobauto cloud sync agent'
+            $shortcut.WindowStyle = 7          # start minimised
+            $shortcut.Save()
+            Write-Host '  added to your Startup folder -- starts at every login.' -ForegroundColor Green
+            Write-Host "  remove it any time: $link" -ForegroundColor DarkGray
+            $registered = $true
+        } catch {
+            Write-Host "  could not set up autostart: $_" -ForegroundColor Yellow
+        }
+    }
+
+    if (-not $registered) {
+        Write-Host '  Start it by hand instead:' -ForegroundColor DarkGray
+        Write-Host "    $Exe agent" -ForegroundColor DarkGray
     }
 }
 
