@@ -42,6 +42,54 @@ class NaukriAdapter(ConfigDrivenAdapter):
                                "opened -- needs a look in the browser")
         return True, ""
 
+    # A chatbot exchange is short; the cap guards against one that keeps
+    # asking rather than looping forever.
+    MAX_QUESTIONS = 12
+
+    def fill_application(self, answerer: Any) -> Any:
+        """Answer the chatbot until it stops asking.
+
+        Its own docstring says it reveals one question at a time, but the
+        default fill reads once -- so question one was answered, question two
+        appeared, and nobody looked again. Same failure as LinkedIn's wizard,
+        different shape.
+        """
+        from ..forms import AnswerResult
+
+        combined = AnswerResult()
+        seen: set[str] = set()
+
+        for _ in range(self.MAX_QUESTIONS):
+            fresh = [q for q in self.read_questions() if q not in seen]
+            if not fresh:
+                break                       # nothing new: the drawer is done
+            seen.update(fresh)
+
+            result = answerer.answer_all(fresh)
+            combined.answered.update(result.answered)
+            for question in result.escalated:
+                if question not in combined.escalated:
+                    combined.escalated.append(question)
+
+            if not result.answered:
+                # Only questions we will not answer -- pressing on would just
+                # re-read the same thing.
+                combined.note = ("the chatbot is waiting on a question left "
+                                 "blank on purpose -- answer it in the browser")
+                break
+
+            for text in result.answered.values():
+                try:
+                    if not self.answer(text):
+                        combined.note = ("could not type an answer into the "
+                                         "chatbot -- finish it in the browser")
+                        return combined
+                except Exception:
+                    combined.note = "the chatbot stopped responding"
+                    return combined
+
+        return combined
+
     def read_questions(self) -> list[str]:
         """The chatbot reveals one question at a time; we read whatever is
         currently on screen."""

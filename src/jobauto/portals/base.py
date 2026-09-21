@@ -68,11 +68,26 @@ class PortalAdapter(ABC):
             node = node[key]
         return node.get("attr") if isinstance(node, dict) else None
 
+    # A floor, so a typo or a zeroed setting cannot turn pacing off entirely.
+    # Applications especially: back-to-back submissions are the single most
+    # obvious automation tell a portal can see.
+    _MIN_PACE = {"between_applications": 5.0}
+
     def pace(self, kind: str = "between_actions") -> None:
         """Randomised human-ish delay, scaled by this portal risk multiplier."""
-        lo, hi = self.config.application.get("pacing", {}).get(kind, [1.0, 3.0])
+        configured = self.config.application.get("pacing", {}).get(kind, [1.0, 3.0])
+        try:
+            lo, hi = float(configured[0]), float(configured[1])
+        except (TypeError, ValueError, IndexError):
+            lo, hi = 1.0, 3.0
+
+        floor = self._MIN_PACE.get(kind, 0.0)
+        lo, hi = max(lo, floor), max(hi, floor)
+        if hi < lo:
+            lo, hi = hi, lo
+
         mult = self.portal.pacing_multiplier
-        time.sleep(random.uniform(float(lo), float(hi)) * mult)
+        time.sleep(random.uniform(lo, hi) * mult)
 
     def guard_challenge(self) -> None:
         """Abort the portal on a captcha/challenge rather than retrying."""
@@ -282,6 +297,47 @@ class PortalAdapter(ABC):
         return (f"{what} button is on the page but was not clickable "
                 f"({type(exc).__name__}) -- it may be disabled, covered by an "
                 f"overlay, or still loading")
+
+    # ---------------------------------------------------- filling the form
+    def read_questions(self) -> list[str]:
+        """Whatever the form is currently asking, via the YAML selectors.
+
+        Only the *visible* step: a multi-step form must be walked, which is
+        what fill_application is for.
+        """
+        selector = self.sel("apply", "question_text")
+        if not selector:
+            return []
+        container = self.sel("apply", "question_container")
+        try:
+            scope = self.page.locator(container) if container else self.page
+            return [t.strip() for t in scope.locator(selector).all_inner_texts()
+                    if t.strip()]
+        except Exception:
+            return []
+
+    def answer(self, text: str) -> bool:
+        """Put one answer into the form. Default: nothing to type into."""
+        return False
+
+    def fill_application(self, answerer: Any) -> Any:
+        """Fill what can be filled, escalate the rest.
+
+        The default assumes one page, which is most portals. A multi-step form
+        overrides this and walks itself -- the pipeline should not need to know
+        the shape of any particular portal's form.
+
+        The adapter decides *where* the answers go; `answerer` decides *what*
+        they are and what must be escalated. That split is deliberate: the
+        never_auto_answer rules are policy and belong in one place.
+        """
+        result = answerer.answer_all(self.read_questions())
+        for text in result.answered.values():
+            try:
+                self.answer(text)
+            except Exception:
+                break
+        return result
 
     def submit(self) -> bool:
         """Only ever called when auto_submit is on AND the portal does not set

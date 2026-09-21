@@ -20,6 +20,9 @@ from typing import Any
 class AnswerResult:
     answered: dict[str, str] = field(default_factory=dict)
     escalated: list[str] = field(default_factory=list)
+    # Why the form could not be completed, if it could not. Empty means the
+    # adapter walked it to the end.
+    note: str = ""
 
     @property
     def needs_you(self) -> bool:

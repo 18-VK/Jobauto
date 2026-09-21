@@ -9,6 +9,8 @@ permanently. This adapter therefore:
 """
 from __future__ import annotations
 
+from typing import Any
+
 from ..models import Job
 from .generic import ConfigDrivenAdapter
 
@@ -97,6 +99,95 @@ class LinkedInAdapter(ConfigDrivenAdapter):
             except Exception:
                 pass
         return "stuck"
+
+    # Easy Apply is typically 2-5 panes. The cap is a guard against a wizard
+    # that never reports "ready" -- better to stop and say so than to loop.
+    MAX_STEPS = 8
+
+    def answer(self, text: str) -> bool:
+        """Type one answer into whatever the current pane is asking.
+
+        Easy Apply mixes free text, numeric fields, dropdowns and radios. Each
+        is tried in turn, and the first that takes the value wins.
+        """
+        scope_sel = self.sel("apply", "question_container")
+        try:
+            scope = (self.page.locator(scope_sel).last
+                     if scope_sel and self.page.locator(scope_sel).count()
+                     else self.page)
+        except Exception:
+            scope = self.page
+
+        # A select whose options contain the answer.
+        try:
+            select = scope.locator("select").last
+            if select.count() and select.is_visible(timeout=1500):
+                for option in select.locator("option").all_inner_texts():
+                    if option.strip() and option.strip().lower() in text.lower():
+                        select.select_option(label=option.strip(), timeout=3000)
+                        return True
+        except Exception:
+            pass
+
+        # A radio whose label matches.
+        try:
+            labels = scope.locator("label")
+            for i in range(min(labels.count(), 12)):
+                label = labels.nth(i)
+                caption = (label.inner_text(timeout=1000) or "").strip()
+                if caption and caption.lower() in text.lower():
+                    label.click(timeout=3000)
+                    return True
+        except Exception:
+            pass
+
+        # A text or number input.
+        for selector in ("input[type='text']", "input[type='number']", "textarea"):
+            try:
+                box = scope.locator(selector).last
+                if box.count() and box.is_visible(timeout=1500):
+                    box.fill(text, timeout=3000)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def fill_application(self, answerer: Any) -> Any:
+        """Walk the Easy Apply wizard, answering each pane as it appears.
+
+        The old flow read the questions once and stopped, so the modal sat on
+        its first pane -- contact details, usually, with no questions at all --
+        and the real screening questions two panes later were never seen. It
+        looked like it had worked.
+        """
+        from ..forms import AnswerResult
+
+        combined = AnswerResult()
+        for step in range(self.MAX_STEPS):
+            result = answerer.answer_all(self.read_questions())
+            combined.answered.update(result.answered)
+            for question in result.escalated:
+                if question not in combined.escalated:
+                    combined.escalated.append(question)
+
+            for text in result.answered.values():
+                try:
+                    self.answer(text)
+                except Exception:
+                    break
+
+            state = self.advance()
+            if state == "ready":
+                return combined            # review pane, submit button waiting
+            if state == "stuck":
+                combined.note = (
+                    f"the Easy Apply form stopped on step {step + 1} -- it is "
+                    "open in the browser, finish it there")
+                return combined
+
+        combined.note = (f"more than {self.MAX_STEPS} steps -- left open in the "
+                         "browser for you to finish")
+        return combined
 
     def read_questions(self) -> list[str]:
         sel = self.sel("apply", "question_text")

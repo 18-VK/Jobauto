@@ -112,7 +112,15 @@ application:
     instahyre: 15
     hirist: 15
 
-  # Human-like pacing between actions, seconds. Randomised in this range.
+  # Human-like pacing, in seconds, randomised within each range. Applied after
+  # EVERY application attempt -- including ones that were skipped, redirected
+  # off-portal, or failed. Those are the fast paths, so a missing delay there
+  # is exactly when the traffic stops looking like a person.
+  #
+  # between_applications has a hard floor of 5 seconds: a zero here would mean
+  # back-to-back submissions, which is the most obvious automation tell a
+  # portal can see. Set [5, 5] if you want exactly five and accept the
+  # tradeoff; the default is slower on purpose.
   pacing:
     between_actions: [1.5, 4.0]
     between_applications: [20, 75]

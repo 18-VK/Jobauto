@@ -5,6 +5,7 @@ caps, cooldowns, active hours, dedupe, and the decision to stop a portal.
 """
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime
 from typing import Any, Callable
 
@@ -35,6 +36,25 @@ def within_active_hours(config: Config) -> tuple[bool, str]:
     if ok:
         return True, ""
     return False, f"outside active hours {lo:02d}:00-{hi:02d}:00 (now {now:02d}:00)"
+
+
+@contextlib.contextmanager
+def _paced(adapter: Any):
+    """Pause after an application attempt, whatever the outcome.
+
+    A context manager rather than a call at the end of the loop, because the
+    loop leaves by half a dozen routes -- skipped, external, failed, already
+    applied -- and every one of them used to skip the wait. Those are the fast
+    paths, so the delay was missing exactly when the traffic looked least like
+    a person.
+    """
+    try:
+        yield
+    finally:
+        try:
+            adapter.pace("between_applications")
+        except Exception:
+            pass          # a failed sleep must not lose the application
 
 
 class Pipeline:
@@ -250,110 +270,114 @@ class Pipeline:
                        .get("same_job", 3650))
 
         for i, row in enumerate(rows, start=1):
-            # Queued rows were vetted one by one in _queued_rows; this
-            # guard would silently drop the retry you just asked for.
-            if not queued and self.db.already_applied(row["fingerprint"], cooldown):
-                continue
+            # Every path out of this loop must pace, including the ones
+            # that continue early. Skipped, external and failed
+            # applications used to reach the next portal hit with no
+            # delay at all -- and those are the fast ones, so that was
+            # exactly when the traffic looked least like a person.
+            with _paced(adapter):
+                # Queued rows were vetted one by one in _queued_rows; this
+                # guard would silently drop the retry you just asked for.
+                if not queued and self.db.already_applied(row["fingerprint"], cooldown):
+                    continue
 
-            job = _job_from_row(row)
-            try:
-                job = adapter.fetch_detail(job)
-            except ChallengeDetected as exc:
-                self.log(f"    {exc}")
-                return False
-            except Exception:
-                pass    # a missing JD body is not fatal; the card data stands
-
-            app = Application(job=job, score=_score_from_row(row))
-            app.resume_path = pick_resume(
-                job.text_blob(), self.config.preferences.get("resume", {}))
-
-            try:
-                on_form, note = adapter.open_application(job)
-            except ChallengeDetected as exc:
-                self.log(f"    {exc}")
-                return False
-            except LoginRequired as exc:
-                # Every remaining job on this portal would fail the same way,
-                # and hammering a logged-out session is exactly what looks
-                # like a bot. Stop the portal and say what to run.
-                self.log(f"    {exc}")
-                return False
-            except Exception as exc:
-                self.db.record_application(job, AppStatus.FAILED,
-                                           error=f"{type(exc).__name__}: {exc}")
-                results["failed"] += 1
-                continue
-
-            if not on_form:
-                status = _classify(note)
-                self.db.record_application(job, status, error=note,
-                                           resume_path=app.resume_path)
-                key = {AppStatus.SUBMITTED: "submitted",
-                       AppStatus.EXTERNAL: "external",
-                       AppStatus.PREPARED: "prepared"}.get(status, "failed")
-                results[key] += 1
-                self.log(f"    {job.title[:40]:<40} {note}")
-                continue
-
-            # Read whatever the portal is asking and fill what we safely can.
-            questions: list[str] = []
-            if hasattr(adapter, "read_questions"):
+                job = _job_from_row(row)
                 try:
-                    questions = adapter.read_questions()
+                    job = adapter.fetch_detail(job)
+                except ChallengeDetected as exc:
+                    self.log(f"    {exc}")
+                    return False
                 except Exception:
-                    questions = []
-            answers = self.answerer.answer_all(questions)
-            app.answered, app.escalated = answers.answered, answers.escalated
+                    pass    # a missing JD body is not fatal; the card data stands
 
-            if hasattr(adapter, "answer"):
-                for _, text in answers.answered.items():
-                    try:
-                        adapter.answer(text)
-                    except Exception:
-                        break
+                app = Application(job=job, score=_score_from_row(row))
+                app.resume_path = pick_resume(
+                    job.text_blob(), self.config.preferences.get("resume", {}))
 
-            app_id = self.db.record_application(
-                job, AppStatus.PREPARED, resume_path=app.resume_path,
-                answered=app.answered, escalated=app.escalated)
-            results["prepared"] += 1
+                try:
+                    on_form, note = adapter.open_application(job)
+                except ChallengeDetected as exc:
+                    self.log(f"    {exc}")
+                    return False
+                except LoginRequired as exc:
+                    # Every remaining job on this portal would fail the same way,
+                    # and hammering a logged-out session is exactly what looks
+                    # like a bot. Stop the portal and say what to run.
+                    self.log(f"    {exc}")
+                    return False
+                except Exception as exc:
+                    self.db.record_application(job, AppStatus.FAILED,
+                                               error=f"{type(exc).__name__}: {exc}")
+                    results["failed"] += 1
+                    continue
 
-            decision = gate.ask(app, i, len(rows))
-            if decision == Decision.OPEN:
-                self.log(f"    open: {job.url}")
+                if not on_form:
+                    status = _classify(note)
+                    self.db.record_application(job, status, error=note,
+                                               resume_path=app.resume_path)
+                    key = {AppStatus.SUBMITTED: "submitted",
+                           AppStatus.EXTERNAL: "external",
+                           AppStatus.PREPARED: "prepared"}.get(status, "failed")
+                    results[key] += 1
+                    self.log(f"    {job.title[:40]:<40} {note}")
+                    continue
+
+                # The adapter knows the shape of its own form -- one page, a
+                # chatbot, or a multi-step wizard. It gets the answerer rather than
+                # a list of answers, so the never_auto_answer rules stay in one
+                # place and every portal obeys them.
+                try:
+                    answers = adapter.fill_application(self.answerer)
+                except Exception as exc:
+                    answers = self.answerer.answer_all([])
+                    answers.note = f"could not fill the form: {type(exc).__name__}"
+
+                app.answered, app.escalated = answers.answered, answers.escalated
+                note = getattr(answers, "note", "")
+                if note:
+                    self.log(f"      {note}")
+
+                app_id = self.db.record_application(
+                    job, AppStatus.PREPARED, resume_path=app.resume_path,
+                    answered=app.answered, escalated=app.escalated,
+                    error=note)
+                results["prepared"] += 1
+
                 decision = gate.ask(app, i, len(rows))
+                if decision == Decision.OPEN:
+                    self.log(f"    open: {job.url}")
+                    decision = gate.ask(app, i, len(rows))
 
-            if decision == Decision.QUIT:
-                self.log("\n  Stopped. Anything already prepared is saved -- "
-                         "resume with: python -m jobauto review")
-                return True
-            if decision == Decision.DEFER:
-                # Stays PREPARED so it shows in the review list -- dashboard,
-                # phone, or `jobauto review`.
-                continue
-            if decision == Decision.SKIP:
-                self.db.set_status(app_id, AppStatus.SKIPPED)
-                results["skipped"] += 1
-                results["prepared"] -= 1
-                continue
-
-            try:
-                if adapter.submit() and adapter.applied_successfully():
-                    self.db.set_status(app_id, AppStatus.SUBMITTED)
-                    results["submitted"] += 1
+                if decision == Decision.QUIT:
+                    self.log("\n  Stopped. Anything already prepared is saved -- "
+                             "resume with: python -m jobauto review")
+                    return True
+                if decision == Decision.DEFER:
+                    # Stays PREPARED so it shows in the review list -- dashboard,
+                    # phone, or `jobauto review`.
+                    continue
+                if decision == Decision.SKIP:
+                    self.db.set_status(app_id, AppStatus.SKIPPED)
+                    results["skipped"] += 1
                     results["prepared"] -= 1
-                    self.log(f"    submitted: {job.title[:44]}")
-                else:
-                    self.db.set_status(
-                        app_id, AppStatus.PREPARED,
-                        error="submit clicked but no success marker seen")
-                    self.log("    could not confirm submission -- check the "
-                             "browser window")
-            except PortalError as exc:
-                self.db.set_status(app_id, AppStatus.PREPARED, error=str(exc))
-                self.log(f"    {exc}")
+                    continue
 
-            adapter.pace("between_applications")
+                try:
+                    if adapter.submit() and adapter.applied_successfully():
+                        self.db.set_status(app_id, AppStatus.SUBMITTED)
+                        results["submitted"] += 1
+                        results["prepared"] -= 1
+                        self.log(f"    submitted: {job.title[:44]}")
+                    else:
+                        self.db.set_status(
+                            app_id, AppStatus.PREPARED,
+                            error="submit clicked but no success marker seen")
+                        self.log("    could not confirm submission -- check the "
+                                 "browser window")
+                except PortalError as exc:
+                    self.db.set_status(app_id, AppStatus.PREPARED, error=str(exc))
+                    self.log(f"    {exc}")
+
 
         return False
 
