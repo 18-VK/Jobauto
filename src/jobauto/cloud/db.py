@@ -46,6 +46,11 @@ class User(Base):
     preferences_updated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow)
 
+    # When the daily schedule last fired. Nullable: most accounts never enable
+    # it, and a null simply means "has not run yet".
+    schedule_last_run: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+
     agents: Mapped[list[Agent]] = relationship(back_populates="user",
                                                cascade="all, delete-orphan")
 

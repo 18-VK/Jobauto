@@ -177,6 +177,42 @@
     </div>
   </div>
 
+  <div class="filter-panel">
+    <h3 class="section-h">Run automatically</h3>
+    <p class="muted">
+      One run a day: search the portals, then work through the shortlist in
+      batches. Applications are still only <strong>prepared</strong> — nothing
+      is submitted for you.
+    </p>
+    <div class="quick-grid">
+      <div>
+        <label><input type="checkbox" id="sched-enabled"> Enabled</label>
+      </div>
+      <div>
+        <label>Start at</label>
+        <input id="sched-time" type="time" value="09:00" />
+      </div>
+      <div>
+        <label>Days</label>
+        <div class="checklist compact" id="sched-days"></div>
+      </div>
+      <div>
+        <label>Applications per batch</label>
+        <input id="sched-batch" type="number" min="1" max="25" value="5" />
+      </div>
+      <div>
+        <label>Batches per day</label>
+        <input id="sched-batches" type="number" min="1" max="20" value="4" />
+        <span class="hint-inline" id="sched-total"></span>
+      </div>
+    </div>
+    <div class="prefhead">
+      <span class="muted" id="sched-next"></span>
+      <button class="btn btn-primary" id="btn-sched-save">Save schedule</button>
+    </div>
+    <div id="sched-msg" class="msg" hidden></div>
+  </div>
+
   <div class="prefhead">
     <span class="muted" id="pref-updated"></span>
   </div>

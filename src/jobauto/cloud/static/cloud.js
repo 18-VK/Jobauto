@@ -35,7 +35,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     document.querySelectorAll('.view').forEach((v) => v.classList.remove('is-active'));
     tab.classList.add('is-active');
     $(`#view-${tab.dataset.view}`).classList.add('is-active');
-    if (tab.dataset.view === 'preferences') loadPrefs();
+    if (tab.dataset.view === 'preferences') { loadPrefs(); loadSchedule(); }
     if (tab.dataset.view === 'devices') loadDevices();
     if (tab.dataset.view === 'applications') loadApps();
   });
@@ -454,6 +454,111 @@ $('#btn-pref-save').onclick = async () => {
     await loadPrefs();
   } catch (e) { prefMsg(e.message, false); } finally { btn.disabled = false; }
 };
+
+/* A top-level YAML block and its indented body. Done by line rather
+   than by regex: a non-greedy pattern here matched only the header and
+   left the old body behind, producing duplicate keys where the stale
+   value won. */
+function replaceYamlBlock(text, name, block) {
+  const out = [];
+  let skipping = false;
+  for (const line of (text || '').split('\n')) {
+    if (skipping) {
+      if (line.trim() && !/^\s/.test(line)) skipping = false;
+      else continue;
+    }
+    if (line.startsWith(name + ':')) { skipping = true; continue; }
+    out.push(line);
+  }
+  return out.join('\n').replace(/\n+$/, '')
+    + '\n\n' + block.replace(/\n+$/, '') + '\n';
+}
+
+/* ----------------------------------------------------------- schedule */
+const DAY_LABELS = [['mon','Mon'],['tue','Tue'],['wed','Wed'],['thu','Thu'],
+                    ['fri','Fri'],['sat','Sat'],['sun','Sun']];
+
+async function loadSchedule() {
+  let d;
+  try { d = await api('/api/schedule'); } catch { return; }
+  const s = d.settings || {};
+
+  $('#sched-enabled').checked = !!s.enabled;
+  $('#sched-time').value = s.time || '09:00';
+  $('#sched-batch').value = s.batch_size || 5;
+  $('#sched-batches').value = s.max_batches || 4;
+
+  const wrap = $('#sched-days');
+  wrap.innerHTML = '';
+  const chosen = (s.days || []).map((x) => String(x).toLowerCase().slice(0, 3));
+  DAY_LABELS.forEach(([key, label]) => {
+    const l = el('label');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = key;
+    box.className = 'sched-day';
+    box.checked = chosen.includes(key);
+    l.append(box, document.createTextNode(' ' + label));
+    wrap.append(l);
+  });
+
+  updateScheduleTotal();
+  $('#sched-next').textContent = d.next_run
+    ? `next run ${new Date(d.next_run).toLocaleString()}`
+    : 'not scheduled';
+}
+
+function updateScheduleTotal() {
+  const total = Number($('#sched-batch').value || 0) * Number($('#sched-batches').value || 0);
+  $('#sched-total').textContent = `up to ${total} applications a day`;
+}
+
+$('#sched-batch').addEventListener('input', updateScheduleTotal);
+$('#sched-batches').addEventListener('input', updateScheduleTotal);
+
+$('#btn-sched-save').onclick = async () => {
+  const btn = $('#btn-sched-save');
+  const days = [...document.querySelectorAll('.sched-day')]
+    .filter((c) => c.checked).map((c) => c.value);
+  if ($('#sched-enabled').checked && !days.length) {
+    return showSchedMsg('Pick at least one day, or turn the schedule off.', false);
+  }
+
+  // Edit the schedule block inside the existing YAML rather than rewriting the
+  // whole file -- everything else in there is the user's.
+  let text = $('#pref-yaml').value || '';
+  const block = [
+    'schedule:',
+    `  enabled: ${$('#sched-enabled').checked}`,
+    `  time: "${$('#sched-time').value || '09:00'}"`,
+    `  timezone: "${Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'}"`,
+    `  days: [${days.map((d) => `"${d}"`).join(', ')}]`,
+    '  discover: true',
+    '  apply: true',
+    `  batch_size: ${Number($('#sched-batch').value || 5)}`,
+    `  max_batches: ${Number($('#sched-batches').value || 4)}`,
+  ].join('\n');
+
+  text = replaceYamlBlock(text, 'schedule', block);
+
+  btn.disabled = true;
+  try {
+    await api('/api/preferences', { method: 'POST', body: JSON.stringify({ yaml: text }) });
+    $('#pref-yaml').value = text;
+    showSchedMsg(agentOnline
+      ? 'Saved. Your PC will pick this up within a minute.'
+      : 'Saved. It starts when your PC next comes online.', true);
+    loadSchedule();
+  } catch (e) { showSchedMsg(e.message, false); } finally { btn.disabled = false; }
+};
+
+function showSchedMsg(text, ok) {
+  const box = $('#sched-msg');
+  box.className = 'msg ' + (ok ? 'ok' : 'bad');
+  box.textContent = text;
+  box.hidden = false;
+}
+
 $('#btn-pref-reload').onclick = loadPrefs;
 
 /* ------------------------------------------------------------ devices */

@@ -179,3 +179,34 @@ retention:
 
   # Expired reset tokens are useless the moment they expire.
   password_resets_days: 1
+
+# ----------------------------------------------------------------------------
+# SCHEDULE  --  run the whole thing daily, unattended
+# ----------------------------------------------------------------------------
+# A run is a chain: discover, then apply in batches.
+#
+#     discover  ->  apply 5  ->  apply 5  ->  apply 5  ->  apply 5
+#
+# Each batch is queued only once the previous one reports back, and the chain
+# stops early when a batch produces nothing -- the shortlist is empty, or a
+# daily cap has been reached.
+#
+# The agent's poll is the clock, because free hosting has no cron. So if your
+# PC is off at the scheduled time, the run starts when it next comes online
+# rather than being skipped. Late is more useful than never.
+#
+# Applications are still only PREPARED. Nothing is submitted for you -- they
+# land under "Waiting for you" for review, exactly as a manual run would.
+# ----------------------------------------------------------------------------
+schedule:
+  enabled: false           # opt in; nobody wants surprise applications
+
+  time: "09:00"            # 24h, in the timezone below
+  timezone: "Asia/Kolkata"
+  days: ["mon", "tue", "wed", "thu", "fri"]
+
+  discover: true           # search the portals first
+  apply: true              # then work through the shortlist
+
+  batch_size: 5            # applications per batch
+  max_batches: 4           # so at most 20 a day at this batch size

@@ -19,7 +19,7 @@ from flask import (Flask, flash, g, jsonify, redirect, render_template,
                    request, session as flask_session, url_for)
 from sqlalchemy import delete, desc, func, or_ as sa_or, select
 
-from . import auth
+from . import auth, schedule
 from .db import (Agent, Application, CloudJob, Task, User, init_engine,
                  session, utcnow)
 
@@ -413,6 +413,22 @@ def create_app() -> Flask:
                         "total": report.total,
                         "summary": report.summary()})
 
+    @app.get("/api/schedule")
+    @auth.login_required
+    def api_schedule():
+        with session() as s:
+            user = s.get(User, g.user.id)
+            settings = schedule.settings_for(user)
+            upcoming = schedule.next_run(settings)
+            return jsonify({
+                "settings": settings,
+                "defaults": schedule.DEFAULTS,
+                "next_run": _iso(upcoming),
+                "last_run": _iso(user.schedule_last_run),
+                "per_day": (int(settings.get("batch_size", 5))
+                            * int(settings.get("max_batches", 4))),
+            })
+
     @app.get("/api/preferences")
     @auth.login_required
     def api_get_prefs():
@@ -607,6 +623,8 @@ def create_app() -> Flask:
             _reap_orphaned_tasks(s, uid)
             _reap_stale_tasks(s, uid)
             _expire_queued_tasks(s, uid)
+            # Free tiers have no cron, so the agent's poll is the clock.
+            schedule.maybe_start(s, uid)
             task = s.scalar(select(Task)
                             .where(Task.user_id == uid, Task.status == "queued")
                             .order_by(Task.created_at).limit(1))
@@ -792,6 +810,17 @@ def create_app() -> Flask:
             task.log = (body.get("log") or "")[-20000:]
             task.finished_at = utcnow()
             s.commit()
+
+            # A scheduled run is a chain: discover, then apply in batches.
+            # Queued only now, so a stalled agent cannot pile them up.
+            user = s.get(User, g.agent.user_id)
+            if user is not None:
+                try:
+                    schedule.next_step(s, user, task)
+                except Exception:
+                    import logging
+                    logging.getLogger("jobauto.schedule").exception(
+                        "could not queue the next scheduled step")
         auth.touch_agent(g.agent.id, f"finished task {task_id}")
         return jsonify({"ok": True})
 

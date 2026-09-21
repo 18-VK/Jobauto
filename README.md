@@ -454,6 +454,37 @@ never_auto_answer:          # always escalated to you, whatever else matches
 Anything unmatched is **left blank and flagged**, never guessed. A wrong
 screening answer on record is worse than no application.
 
+### Running it daily on its own
+
+**Preferences → Run automatically.** One run a day: search the portals, then
+work through the shortlist in batches.
+
+```
+  discover  ->  apply 5  ->  apply 5  ->  apply 5  ->  apply 5
+```
+
+```yaml
+schedule:
+  enabled: true
+  time: "09:00"
+  timezone: "Asia/Kolkata"
+  days: ["mon", "tue", "wed", "thu", "fri"]
+  batch_size: 5            # applications per batch
+  max_batches: 4           # so up to 20 a day
+```
+
+Each batch is queued only once the previous one reports back, and the chain
+stops early when a batch produces nothing — the shortlist is empty, or a daily
+cap has been reached.
+
+**Applications are still only prepared.** The schedule does the searching and
+the form filling; they land under *Waiting for you* for review exactly as a
+manual run would. Nothing is ever submitted for you.
+
+The agent's poll is the clock, because free hosting has no cron. So if your PC
+is off at the scheduled time, the run starts when it next comes online rather
+than being skipped.
+
 ### Automatic cleanup
 
 Keeps a free database small. Runs twice a day:
@@ -594,7 +625,7 @@ see `naukri.py` for a chatbot flow, `linkedin.py` for a multi-step wizard.
 ## Tests
 
 ```powershell
-python -m pytest -q      # 278 tests, no browser or network required
+python -m pytest -q      # 360 tests, no browser or network required
 ```
 
 Covers scoring and parsing, config validation, screening answers, the full
