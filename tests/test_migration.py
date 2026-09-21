@@ -135,11 +135,12 @@ def test_rerunning_is_safe(tmp_path):
 
 
 def test_empty_source_is_reported_not_silently_ok(tmp_path):
+    """Tables present but no rows -- distinct from tables missing entirely."""
     src, dst = tmp_path / "s.db", tmp_path / "d.db"
     Base.metadata.create_all(create_engine(f"sqlite:///{src}", future=True))
     res = run_migration(src, dst)
     assert res.returncode == 1
-    assert "source is empty" in res.stdout
+    assert "no rows" in res.stdout
 
 
 def test_wipe_target_clears_before_copying(tmp_path):
@@ -237,3 +238,48 @@ def test_sqlite_url_is_described_simply():
     res = check_url("sqlite:///cloud.db")
     assert res.returncode == 0
     assert "sqlite file" in res.stdout
+
+
+# ============================== source with no tables (not just no rows)
+def test_source_with_no_tables_is_explained_not_crashed(tmp_path):
+    """Pointing --from at a brand-new database used to raise UndefinedTable and
+    dump a traceback. It must name the likely cause instead."""
+    src, dst = tmp_path / "empty.db", tmp_path / "d.db"
+    create_engine(f"sqlite:///{src}", future=True).connect().close()
+
+    res = run_migration(src, dst, "--dry-run")
+    assert res.returncode == 1
+    assert "none of the jobauto tables" in res.stdout
+    assert "wrong way round" in res.stdout
+    assert "Traceback" not in res.stdout + res.stderr
+
+
+def test_untouched_target_when_source_has_no_tables(tmp_path):
+    """Reporting a bad --from must not leave tables behind on the target."""
+    from sqlalchemy import inspect
+
+    src, dst = tmp_path / "empty.db", tmp_path / "d.db"
+    create_engine(f"sqlite:///{src}", future=True).connect().close()
+    run_migration(src, dst, "--dry-run")
+
+    engine = create_engine(f"sqlite:///{dst}", future=True)
+    assert inspect(engine).get_table_names() == []
+    engine.dispose()
+
+
+def test_absent_tables_show_as_dashes(tmp_path):
+    """An absent table and an empty one are different facts when you are
+    working out which database is which."""
+    src, dst = tmp_path / "s.db", tmp_path / "d.db"
+    build_source(src)
+
+    # Drop one table on the source so it is absent rather than empty.
+    engine = create_engine(f"sqlite:///{src}", future=True)
+    Task.__table__.drop(engine)
+    engine.dispose()
+
+    res = run_migration(src, dst, "--dry-run")
+    assert res.returncode == 0
+    tasks_line = [l for l in res.stdout.splitlines() if l.strip().startswith("tasks")][0]
+    assert "--" in tasks_line
+    assert "does not exist on that side" in res.stdout

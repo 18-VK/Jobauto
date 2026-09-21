@@ -70,13 +70,37 @@ def make_engine(url: str, label: str):
     return engine
 
 
-def row_counts(session_factory) -> dict[str, int]:
-    out: dict[str, int] = {}
+def present_tables(engine) -> set[str]:
+    """Which jobauto tables actually exist. A database that has never run the
+    app has none, and asking it for a row count just raises UndefinedTable."""
+    from sqlalchemy import inspect
+    try:
+        return set(inspect(engine).get_table_names())
+    except Exception:
+        return set()
+
+
+def row_counts(session_factory, engine) -> dict[str, int | None]:
+    """Rows per table. None means the table is absent rather than empty --
+    a distinction that matters when working out which database is which."""
+    existing = present_tables(engine)
+    out: dict[str, int | None] = {}
     with session_factory() as s:
         for model in TABLES:
-            out[model.__tablename__] = int(
-                s.scalar(select(func.count()).select_from(model)) or 0)
+            name = model.__tablename__
+            if name not in existing:
+                out[name] = None
+                continue
+            try:
+                out[name] = int(s.scalar(select(func.count()).select_from(model)) or 0)
+            except Exception:
+                s.rollback()
+                out[name] = None
     return out
+
+
+def fmt(value: int | None) -> str:
+    return "  --" if value is None else f"{value:>4}"
 
 
 def copy_table(model, src_factory, dst_factory, batch: int = 500) -> int:
@@ -139,24 +163,39 @@ def main() -> int:
     SrcSession = sessionmaker(bind=src_engine, future=True)
     DstSession = sessionmaker(bind=dst_engine, future=True)
 
+    # Read the source before touching the target, so a mistaken --from is
+    # reported without having created anything anywhere.
+    before_src = row_counts(SrcSession, src_engine)
+
+    if all(v is None for v in before_src.values()):
+        print("\n  The SOURCE database has none of the jobauto tables.\n")
+        print("  It has never run the app, so there is nothing to copy. Usually"
+              " this means:\n")
+        print("    - --from and --to are the wrong way round (--from is the OLD"
+              " database,")
+        print("      --to is the NEW empty one), or")
+        print("    - --from points at a fresh database you just created\n")
+        print("  Nothing was written to either database.\n")
+        return 1
+
     print("  creating any missing tables on the target")
     Base.metadata.create_all(dst_engine)
+    before_dst = row_counts(DstSession, dst_engine)
 
-    before_src = row_counts(SrcSession)
-    before_dst = row_counts(DstSession)
-
-    print("\n  source                target")
-    print("  " + "-" * 44)
+    print("\n  table                 source    target")
+    print("  " + "-" * 40)
     for table in before_src:
-        print(f"  {table:<22}{before_src[table]:>6}  ->{before_dst[table]:>6}")
+        print(f"  {table:<22}{fmt(before_src[table])}  ->{fmt(before_dst[table])}")
+    if any(v is None for v in before_src.values()):
+        print("\n  (-- means the table does not exist on that side)")
 
+    total = sum(v for v in before_src.values() if v)
     if args.dry_run:
-        total = sum(before_src.values())
         print(f"\n  dry run: {total} row(s) would be copied. Nothing changed.\n")
         return 0
 
-    if not any(before_src.values()):
-        print("\n  the source is empty -- nothing to migrate.\n")
+    if not total:
+        print("\n  the source has the tables but no rows -- nothing to migrate.\n")
         return 1
 
     if args.wipe_target and any(before_dst.values()):
@@ -174,15 +213,16 @@ def main() -> int:
     print("\n  resetting id sequences")
     reset_sequences(dst_engine)
 
-    after_dst = row_counts(DstSession)
+    after_dst = row_counts(DstSession, dst_engine)
     print("\n  verifying")
     ok = True
     for table, expected in before_src.items():
-        got = after_dst[table]
-        mark = "ok" if got >= expected else "MISMATCH"
-        if got < expected:
+        got = after_dst[table] or 0
+        want = expected or 0
+        mark = "ok" if got >= want else "MISMATCH"
+        if got < want:
             ok = False
-        print(f"    {table:<22}{expected:>6} expected, {got:>6} present   {mark}")
+        print(f"    {table:<22}{want:>6} expected, {got:>6} present   {mark}")
 
     if not ok:
         print("\n  Some rows did not make it. The target was not cleaned up --\n"

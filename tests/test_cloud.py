@@ -858,3 +858,40 @@ def test_supabase_url_is_normalised(monkeypatch):
     url = clouddb.database_url()
     assert url.startswith("postgresql+psycopg://")
     assert "pooler.supabase.com:5432" in url
+
+
+# ==================================== unreachable database diagnostics
+def test_unreachable_database_raises_a_named_error(monkeypatch, tmp_path):
+    """Regression: an unreachable host made the gunicorn worker hang until it
+    was killed on boot timeout, logging only 'Exited with status 3' with no
+    cause. It must fail fast and say why."""
+    monkeypatch.setenv("DATABASE_URL",
+                       "postgresql://postgres:secret@db.nonexistent-ref.supabase.co:5432/postgres")
+    clouddb.reset_engine()
+    with pytest.raises(clouddb.DatabaseUnreachable) as excinfo:
+        clouddb.init_engine()
+    clouddb.reset_engine()
+
+    message = str(excinfo.value)
+    assert "DATABASE UNREACHABLE" in message
+    assert "db.nonexistent-ref.supabase.co" in message
+    assert "IPv6-only" in message
+    assert "pooler.supabase.com" in message      # names the fix
+
+
+@pytest.mark.parametrize("host,user,expected", [
+    ("db.abcd.supabase.co", "postgres", "IPv6-only"),
+    ("aws-0-ap-south-1.pooler.supabase.com", "postgres", "postgres.<project-ref>"),
+])
+def test_failure_explanations_match_the_cause(host, user, expected):
+    url = f"postgresql://{user}:pw@{host}:5432/postgres"
+    message = clouddb.explain_connection_failure(url, OSError("connection timed out"))
+    assert expected in message
+    assert host in message
+
+
+def test_auth_failure_mentions_percent_encoding():
+    url = "postgresql://postgres.abcd:pw@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
+    message = clouddb.explain_connection_failure(
+        url, Exception('FATAL:  password authentication failed for user "postgres"'))
+    assert "percent-encoded" in message

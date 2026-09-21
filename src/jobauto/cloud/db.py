@@ -266,16 +266,89 @@ def init_engine(url: str | None = None, echo: bool = False):
         # recycle before the provider's idle timeout kills a connection.
         kwargs.update(pool_size=3, max_overflow=2, pool_pre_ping=True,
                       pool_recycle=280)
+        # Without a timeout an unreachable host (the IPv6-only Supabase direct
+        # endpoint is the classic one) makes the worker hang until gunicorn
+        # kills it on boot timeout -- which logs no traceback at all, just
+        # "Exited with status 3". Fail in ten seconds with a reason instead.
+        connect_args: dict[str, Any] = {"connect_timeout": 10}
         if is_transaction_pooler(url):
             # pgBouncer in transaction mode hands you a different backend per
             # transaction, so a prepared statement from one is meaningless to
             # the next. Turning preparation off is the supported fix.
-            kwargs["connect_args"] = {"prepare_threshold": None}
+            connect_args["prepare_threshold"] = None
             kwargs["pool_recycle"] = 120
+        kwargs["connect_args"] = connect_args
     _engine = create_engine(url, **kwargs)
     _Session = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
-    create_schema(_engine)
+    try:
+        create_schema(_engine)
+    except Exception as exc:
+        # Say which database could not be reached and why. Left to gunicorn
+        # this surfaces as a bare "Exited with status 3" with no cause.
+        raise DatabaseUnreachable(explain_connection_failure(url, exc)) from exc
     return _engine
+
+
+class DatabaseUnreachable(RuntimeError):
+    pass
+
+
+def explain_connection_failure(url: str, exc: Exception) -> str:
+    """Turn a driver error into something actionable in a deploy log."""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(url)
+        host, port, user = parts.hostname or "?", parts.port or 5432, parts.username or "?"
+    except Exception:
+        host, port, user = "?", "?", "?"
+
+    lines = [
+        "",
+        "=" * 68,
+        "  DATABASE UNREACHABLE -- the app cannot start.",
+        "=" * 68,
+        f"  host   {host}",
+        f"  port   {port}",
+        f"  user   {user}",
+        f"  error  {type(exc).__name__}: {str(exc).splitlines()[0][:160]}",
+        "",
+    ]
+
+    text = str(exc).lower()
+    if host.startswith("db.") and host.endswith(".supabase.co"):
+        ref = host[len("db."):-len(".supabase.co")]
+        lines += [
+            "  This is the Supabase DIRECT endpoint, which is IPv6-only on new",
+            "  projects. Render has no IPv6 egress, so it can never be reached",
+            "  from here -- it will hang rather than refuse.",
+            "",
+            "  Use the session pooler instead:",
+            f"    postgresql://postgres.{ref}:<password>"
+            f"@aws-0-<region>.pooler.supabase.com:5432/postgres",
+        ]
+    elif "pooler.supabase.com" in host and user == "postgres":
+        lines += [
+            "  The Supabase pooler needs the username 'postgres.<project-ref>',",
+            "  not a bare 'postgres' -- that form belongs to the direct string.",
+        ]
+    elif "timeout" in text or "timed out" in text:
+        lines += [
+            "  The host did not answer within 10 seconds. Usually a wrong",
+            "  hostname, or an endpoint this network cannot route to.",
+        ]
+    elif "password authentication failed" in text:
+        lines += [
+            "  The host answered but rejected the credentials. Check the",
+            "  username and password in DATABASE_URL; a '@' or '#' in the",
+            "  password must be percent-encoded (%40, %23).",
+        ]
+    elif "does not exist" in text:
+        lines += ["  The server is reachable but that database name is wrong."]
+
+    lines += ["", "  Checked with: python scripts/check_db_url.py \"<url>\" --connect",
+              "=" * 68, ""]
+    return "\n".join(lines)
 
 
 def session():
