@@ -26,8 +26,9 @@ rows is well under a megabyte.
 This is the step that catches people out. Supabase offers three, and **two of
 them will not work on Render**.
 
-**Project Settings → Database → Connection string**, then pick **Session
-pooler**:
+Click **Connect** at the top of the dashboard (next to the project name), then
+choose the **Session pooler** tab. Older Supabase builds put this under
+**Project Settings → Database → Connection string** instead.
 
 ```
 postgresql://postgres.abcdefgh:YOUR-PASSWORD@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
@@ -40,7 +41,48 @@ postgresql://postgres.abcdefgh:YOUR-PASSWORD@aws-0-ap-south-1.pooler.supabase.co
 | Direct | `db.<ref>.supabase.co:5432` | **No.** IPv6-only on new projects, and Render has no IPv6 egress. It will just time out |
 
 Replace `YOUR-PASSWORD` with the password from step 1. If it contains `@`, `/`
-or `#`, percent-encode those (`@` → `%40`).
+or `#`, percent-encode those (`@` → `%40`) or reset it to something
+alphanumeric.
+
+### Telling the three apart
+
+The **direct** string is the one Supabase shows most prominently, and it is the
+wrong one. Compare:
+
+```
+direct   postgresql://postgres:PASS@db.<ref>.supabase.co:5432/postgres
+                      ^^^^^^^^        ^^^^^^^^^^^^^^^^^^^^^^^^
+session  postgresql://postgres.<ref>:PASS@aws-0-<region>.pooler.supabase.com:5432/postgres
+                      ^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+```
+
+Two tells: the pooler username is `postgres.` **plus your project ref**, and the
+host ends in `pooler.supabase.com`. If your string says `db.<ref>.supabase.co`,
+it is the direct one and Render cannot reach it.
+
+### Building it by hand
+
+You do not need the UI at all — the format is fixed:
+
+```
+postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres
+```
+
+- **PROJECT_REF** — the id in your dashboard URL,
+  `supabase.com/dashboard/project/`**`<this part>`**
+- **REGION** — what you chose at creation; Mumbai is `ap-south-1`. Also under
+  **Settings → General → Region**
+- **PASSWORD** — set at creation; resettable under **Settings → Database**
+
+### Check it before going further
+
+```powershell
+python scripts/migrate_db.py --from "<your-string>" --to "sqlite:///throwaway.db" --dry-run
+```
+
+Reads only, writes nothing. A table of zeroes means the string works on a fresh
+project. A wrong string fails within ten seconds with a named error rather than
+hanging.
 
 ## 3. Copy your data across
 
