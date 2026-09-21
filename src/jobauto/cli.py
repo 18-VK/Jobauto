@@ -46,6 +46,20 @@ def _sync_cloud_preferences_if_linked() -> None:
         return
 
 
+def invocation() -> str:
+    """How this copy was launched, so help text matches what the user typed.
+
+    An installed copy gets a `jobauto` entry point; a checkout is run with
+    `python -m jobauto`. Printing the wrong one sends people down a path that
+    does not work for them.
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    stem = _Path(sys.argv[0]).stem.lower()
+    return "jobauto" if stem in ("jobauto", "jobauto-script") else "python -m jobauto"
+
+
 def _load() -> Config:
     _sync_cloud_preferences_if_linked()
     try:

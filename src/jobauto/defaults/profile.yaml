@@ -1,0 +1,92 @@
+# ============================================================================
+# PROFILE  --  the answers used to auto-fill application forms
+# ============================================================================
+# This file contains personal data but NO passwords. Portal logins use a
+# persistent browser profile (you log in once, by hand); see docs/SETUP.md.
+#
+# Copy to profile.local.yaml and edit there -- profile.local.yaml is
+# gitignored and takes precedence if present.
+# ============================================================================
+
+identity:
+  full_name: ""
+  email: ""
+  phone: ""
+  location_city: "Noida"
+  location_country: "India"
+  linkedin_url: ""
+  github_url: ""
+  portfolio_url: ""
+
+professional:
+  current_title: ""
+  current_company: ""
+  total_experience_years: 3.5
+  notice_period_days: 60
+  # Some portals ask this as a dropdown; these are the common option labels.
+  notice_period_label: "2 Months"
+  serving_notice: false
+  last_working_day: null       # "YYYY-MM-DD" if serving notice
+
+  current_ctc_lpa: 8.0
+  expected_ctc_lpa: 14.0
+  ctc_negotiable: true
+
+  highest_qualification: "B.Tech"
+  specialization: ""
+  graduation_year: null
+
+skills:
+  # Used for skill-overlap scoring AND for keyword injection when tailoring.
+  # `level` is 1-5 and biases which skills get surfaced first in a tailored CV.
+  primary:
+    - {name: "C#", level: 5}
+    - {name: ".NET Core", level: 5}
+    - {name: "ASP.NET", level: 4}
+    - {name: "SQL Server", level: 4}
+    - {name: "REST API", level: 4}
+  secondary:
+    - {name: "JavaScript", level: 3}
+    - {name: "React", level: 3}
+    - {name: "PostgreSQL", level: 3}
+    - {name: "Git", level: 4}
+    - {name: "Docker", level: 2}
+
+work_authorization:
+  country: "India"
+  requires_sponsorship: false
+  willing_to_relocate: false
+
+# ----------------------------------------------------------------------------
+# SCREENING ANSWERS
+# ----------------------------------------------------------------------------
+# Portals ask the same handful of screening questions repeatedly. Answer them
+# once here and the form-filler reuses them. Matching is fuzzy on the question
+# text; anything unmatched is left blank and flagged for you at review time.
+# ----------------------------------------------------------------------------
+screening_answers:
+  - match: ["notice period", "when can you join", "joining time"]
+    answer: "60 days (negotiable)"
+  - match: ["current ctc", "current salary", "present compensation"]
+    answer: "8 LPA"
+  - match: ["expected ctc", "expected salary", "salary expectation"]
+    answer: "14 LPA"
+  - match: ["total experience", "years of experience"]
+    answer: "3.5"
+  - match: ["willing to relocate", "open to relocation"]
+    answer: "No"
+  - match: ["sponsorship", "work authorization", "visa"]
+    answer: "No sponsorship required"
+  - match: ["why do you want", "why are you interested"]
+    answer: ""   # left blank on purpose -- tailored per job, or answered by you
+
+# Questions matching any of these are ALWAYS escalated to you, never
+# auto-filled, regardless of whether an answer above matches.
+never_auto_answer:
+  - "aadhaar"
+  - "pan number"
+  - "bank"
+  - "date of birth"
+  - "password"
+  - "salary slip"
+  - "reference contact"

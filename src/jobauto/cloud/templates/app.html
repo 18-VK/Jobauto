@@ -193,9 +193,20 @@
   <div id="devices" class="cards"></div>
 
   <h3 class="section-h">Link a PC</h3>
-  <p class="muted">Run these two commands in the project folder on your PC:</p>
-  <pre class="code" id="link-cmd">loading…</pre>
-  <button class="btn btn-sm" id="btn-copy">Copy</button>
+  <p class="muted">
+    On the machine that will do the applying, open <strong>PowerShell</strong>
+    and run this. It needs nothing installed beyond Python 3.10+ — no repo, no
+    setup. You'll be asked for the token below.
+  </p>
+  <pre class="code" id="install-cmd">loading…</pre>
+  <button class="btn btn-sm" id="btn-copy-install">Copy</button>
+
+  <details class="details-block">
+    <summary>Already have the project checked out?</summary>
+    <p class="muted">Then link it directly instead:</p>
+    <pre class="code" id="link-cmd">loading…</pre>
+    <button class="btn btn-sm" id="btn-copy">Copy</button>
+  </details>
 
   <h3 class="section-h">Database cleanup</h3>
   <p class="muted">

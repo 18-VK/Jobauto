@@ -1,0 +1,36 @@
+id: instahyre
+name: "Instahyre"
+enabled: true
+base_url: "https://www.instahyre.com"
+adapter: "jobauto.portals.instahyre:InstahyreAdapter"
+
+# Instahyre is opportunity-feed based rather than search based: employers
+# surface to you and you accept/decline. Lower volume, much higher signal.
+mode: opportunity_feed
+
+auth:
+  mode: persistent_profile
+  login_url: "https://www.instahyre.com/login/"
+  logged_in_selector: ".navbar-right .dropdown-toggle, a[href*='/candidate/']"
+
+search:
+  url_template: "https://www.instahyre.com/candidate/opportunities/"
+  results_container: ".opportunities-list, .ng-scope"
+  result_card: ".opportunity-container, .opportunity"
+  fields:
+    title: ".opportunity-title, h3"
+    url: {selector: "a.opportunity-link", attr: "href"}
+    company: ".company-name"
+    location: ".opportunity-location"
+    experience: ".opportunity-experience"
+    salary: ".opportunity-ctc"
+  pagination:
+    next: ".load-more, button.btn-load-more"
+    max_pages: 3
+
+detail:
+  jd_body: ".opportunity-description, .job-description"
+
+apply:
+  instant_button: "button.btn-apply, .accept-opportunity"
+  success_indicator: ".applied-label, .opportunity-applied"

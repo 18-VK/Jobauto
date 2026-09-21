@@ -1,0 +1,181 @@
+# ============================================================================
+# SEARCH PREFERENCES  --  the control panel for the whole system
+# ============================================================================
+# Everything here drives BOTH what gets searched on each portal AND how the
+# resulting jobs are scored. Nothing about roles or skills is hardcoded in the
+# Python; change this file and the behaviour changes. No code edits needed.
+#
+# Scoring runs 0-100. Jobs below `thresholds.shortlist` are never shown to you.
+# ============================================================================
+
+search:
+  # Roles to hunt for. Each becomes a separate search query on every enabled
+  # portal. `weight` biases the score when a job matches this title group.
+  roles:
+    - title: "Software Developer"
+      weight: 1.0
+      aliases: ["Software Engineer", "SDE", "Application Developer"]
+    - title: "Backend Developer"
+      weight: 1.0
+      aliases: ["Backend Engineer", "API Developer", "Server Side Developer"]
+    - title: "Full Stack Developer"
+      weight: 0.9
+      aliases: ["Fullstack Engineer", "Full Stack Engineer"]
+    - title: ".NET Developer"
+      weight: 1.0
+      aliases: ["Dotnet Developer", "C# Developer", "ASP.NET Developer"]
+
+  # Free-text keywords added to queries and matched against the JD body.
+  keywords:
+    include: ["REST API", "microservices", "SQL Server", "PostgreSQL"]
+    # Any of these appearing in the title or JD kills the job outright.
+    exclude: ["intern", "internship", "unpaid", "commission only",
+              "field sales", "bpo", "voice process", "night shift"]
+
+  experience:
+    min_years: 2
+    max_years: 6
+    # Your actual experience. Jobs asking for far more than this are down-ranked.
+    current_years: 3.5
+
+  locations:
+    preferred: ["Noida", "Delhi NCR", "Gurgaon", "Remote"]
+    acceptable: ["Bangalore", "Hyderabad", "Pune"]
+    blocked: []
+    # "remote" | "hybrid" | "onsite" | "any"
+    work_mode: ["remote", "hybrid", "onsite"]
+    relocate: false
+
+  compensation:
+    currency: "INR"
+    current_ctc_lpa: 8.0
+    expected_ctc_lpa: 14.0
+    # Jobs listing max CTC below this are down-ranked, not dropped, because
+    # most Indian listings hide salary entirely (handled as `unknown`).
+    minimum_acceptable_lpa: 11.0
+    negotiable: true
+
+  company:
+    # Down-rank or drop specific employers. Useful for your current employer,
+    # or consultancies you have already dealt with.
+    blocked: []
+    preferred: []
+    # Drop staffing agencies / consultancies posting on behalf of clients.
+    exclude_staffing_agencies: false
+    min_employee_rating: 3.0   # portal rating out of 5; null disables
+
+  posting:
+    # How recently a job must have been posted. Used twice: sent to the portal
+    # so stale listings are never fetched, and applied exactly by the scorer.
+    # Naukri and Hirist only accept 1/3/7/15/30, so the portal-side value is
+    # rounded UP to the nearest of those -- the scorer still enforces the exact
+    # number, and rounding up never hides something you asked for.
+    max_age_days: 21
+    require_salary_disclosed: false
+
+# ----------------------------------------------------------------------------
+# SCORING WEIGHTS  --  must sum to 1.0 (validated at load time)
+# ----------------------------------------------------------------------------
+scoring:
+  weights:
+    title_match: 0.30
+    skill_overlap: 0.25
+    experience_fit: 0.15
+    location_fit: 0.15
+    compensation_fit: 0.10
+    company_quality: 0.05
+
+  # Score penalties applied after weighting.
+  penalties:
+    stale_posting: 10          # older than half of max_age_days
+    no_salary_disclosed: 3
+    overqualified: 8           # job max_years well below your experience
+    already_applied_company: 15  # applied to this company in last 90 days
+
+thresholds:
+  shortlist: 60      # below this, never surfaced
+  auto_tailor: 70    # at/above this, generate a tailored resume + cover letter
+  priority: 85       # at/above this, flagged in the digest as top pick
+
+# ----------------------------------------------------------------------------
+# APPLICATION BEHAVIOUR
+# ----------------------------------------------------------------------------
+application:
+  # Review-then-submit: the bot fills the form and STOPS. You click submit.
+  # Changing this to true is a deliberate act -- read docs/RISKS.md first.
+  auto_submit: false
+
+  daily_caps:                  # per portal, per day
+    naukri: 25
+    linkedin: 15
+    indeed: 20
+    instahyre: 15
+    hirist: 15
+
+  # Human-like pacing between actions, seconds. Randomised in this range.
+  pacing:
+    between_actions: [1.5, 4.0]
+    between_applications: [20, 75]
+    # Don't run outside these hours (24h, local). Applying at 3am looks robotic.
+    active_hours: [8, 22]
+
+  # Re-apply guard
+  cooldown_days:
+    same_job: 3650             # effectively never re-apply to same posting
+    same_company: 30
+
+resume:
+  default: "resumes/base.docx"
+  # Pick a variant by matching these keywords against the job. First match wins.
+  variants:
+    - file: "resumes/backend.docx"
+      match_keywords: ["backend", "api", "microservices", ".net", "c#"]
+    - file: "resumes/fullstack.docx"
+      match_keywords: ["full stack", "react", "node", "mern", "frontend"]
+  tailor:
+    enabled: true
+    # Rewrites summary + reorders bullets to mirror the JD. Never invents facts.
+    rewrite_summary: true
+    reorder_bullets: true
+    inject_jd_keywords: true
+    max_keyword_injections: 8
+    cover_letter: true
+
+notifications:
+  daily_digest: true
+  digest_time: "09:00"
+  # Only notify for jobs at/above this score.
+  min_score: 70
+
+# ----------------------------------------------------------------------------
+# RETENTION  --  automatic cleanup, to keep a free-tier database small
+# ----------------------------------------------------------------------------
+# Runs at most twice a day, triggered by the agent's poll. Any window set to 0
+# means "keep forever".
+#
+# Three things are never purged at any age, because losing them loses work
+# rather than saving space:
+#   - applications still `prepared` (filled in, waiting for YOU to submit)
+#   - jobs still queued to apply
+#   - tasks still queued or running
+# ----------------------------------------------------------------------------
+retention:
+  enabled: true
+
+  # Discovered jobs you never acted on. The biggest consumer of space: every
+  # run adds rows, and a listing older than this is stale anyway.
+  jobs_days: 7
+
+  # Job rows for applications already recorded. Safe to drop -- the application
+  # row keeps the title, company and url, so the history survives.
+  applied_jobs_days: 7
+
+  # Finished run history. Each task stores its whole log, so these add up.
+  tasks_days: 7
+
+  # Your record of where you applied. 0 keeps it forever, which is the default:
+  # it is a handful of rows, and it is the answer to "did I already apply here?"
+  applications_days: 0
+
+  # Expired reset tokens are useless the moment they expire.
+  password_resets_days: 1

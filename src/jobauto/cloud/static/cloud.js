@@ -488,6 +488,7 @@ async function loadDevices() {
 
   if (d.agents.length) {
     const ag = d.agents[0];
+    $('#install-cmd').textContent = `irm ${location.origin}/install.ps1 | iex`;
     $('#link-cmd').textContent =
       `python -m jobauto link --url ${location.origin} --token ${ag.token}\n` +
       `python -m jobauto agent`;
@@ -551,6 +552,17 @@ $('#btn-purge').onclick = async () => {
     loadRetention(); loadSummary(); loadJobs();
   } catch (e) { alert(e.message); } finally { btn.disabled = false; }
 };
+
+async function copyFrom(selector, button) {
+  try {
+    await navigator.clipboard.writeText($(selector).textContent);
+    const original = button.textContent;
+    button.textContent = 'Copied';
+    setTimeout(() => (button.textContent = original), 1500);
+  } catch { alert('Copy failed — select the text manually.'); }
+}
+
+$('#btn-copy-install').onclick = (e) => copyFrom('#install-cmd', e.target);
 
 $('#btn-copy').onclick = async () => {
   try {

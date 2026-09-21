@@ -12,8 +12,9 @@ WORKDIR /app
 COPY requirements-cloud.txt .
 RUN pip install --no-cache-dir -r requirements-cloud.txt
 
-COPY src/jobauto/__init__.py      src/jobauto/__init__.py
-COPY src/jobauto/cloud            src/jobauto/cloud
+# The whole package, not just the cloud half: /agent.zip serves the agent
+# source so a fresh PC can install without the repo, PyPI or a public mirror.
+COPY src/jobauto                  src/jobauto
 COPY config/preferences.yaml      config/preferences.yaml
 
 EXPOSE 8000

@@ -4,25 +4,47 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jobauto"
-version = "0.1.0"
-description = "Job application assistant for Indian job portals"
+version = "0.2.0"
+description = "Preference-driven job application assistant. Fills applications; you submit them."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# Only what the agent needs on a user's PC. The cloud app has its own,
+# smaller set in requirements-cloud.txt -- it never drives a browser.
 dependencies = [
-  "playwright>=1.44",
-  "PyYAML>=6.0",
-  "Flask>=3.0",
-  "SQLAlchemy>=2.0",
-  "psycopg[binary]>=3.1",
-  "requests>=2.31",
-  "gunicorn>=21.2",
+    "playwright>=1.44",
+    "PyYAML>=6.0",
+    "requests>=2.31",
 ]
 
+[project.optional-dependencies]
+# Running the hosted app yourself, rather than just the agent.
+cloud = [
+    "Flask>=3.0",
+    "SQLAlchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "gunicorn>=21.2",
+]
+dev = ["pytest>=8.0"]
+
 [project.scripts]
+# Installing the package puts `jobauto` on PATH, so no PYTHONPATH and no
+# `python -m` -- which is the whole point of packaging this.
 jobauto = "jobauto.cli:main"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Portal selectors and the preference template ship with the code; without
+# them a fresh install has nothing to search.
+"jobauto" = ["defaults/*.yaml", "defaults/portals/*.yaml"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

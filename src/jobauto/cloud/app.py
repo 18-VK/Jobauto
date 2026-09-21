@@ -190,6 +190,29 @@ def create_app() -> Flask:
         return render_template("app.html", email=g.user.email,
                                welcome=request.args.get("welcome") == "1")
 
+    # ----------------------------------------------------- installer
+    # Public on purpose: the installer runs before anyone has signed in, and
+    # neither endpoint carries a secret. The agent token is typed in by the
+    # person running it.
+    @app.get("/install.ps1")
+    def install_script():
+        from . import installer
+        from flask import Response
+
+        base = request.url_root.rstrip("/")
+        return Response(installer.installer_script(base),
+                        mimetype="text/plain; charset=utf-8")
+
+    @app.get("/agent.zip")
+    def agent_zip():
+        from . import installer
+        from flask import Response
+
+        return Response(
+            installer.build_agent_zip(),
+            mimetype="application/zip",
+            headers={"Content-Disposition": "attachment; filename=jobauto-agent.zip"})
+
     @app.get("/healthz")
     def healthz():
         """Free hosts ping this to decide whether the instance is alive."""

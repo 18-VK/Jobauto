@@ -61,6 +61,12 @@ Same app, same login, running on your machine. First visit creates your account.
 .\push-to-github.ps1             # private repo, one browser sign-in
 ```
 
+Once it's up, any PC joins with a single command — no repo, no setup:
+
+```powershell
+irm https://your-app.onrender.com/install.ps1 | iex
+```
+
 Then <https://render.com> → **New → Blueprint** → pick the repo → **Apply**.
 Render reads [render.yaml](render.yaml), creates the web service and a free
 Postgres, and hands you a permanent URL.
@@ -275,7 +281,7 @@ and it measurably lifts inbound.
 ## Tests
 
 ```bash
-python -m pytest -q      # 260 tests, no browser or network required
+python -m pytest -q      # 278 tests, no browser or network required
 ```
 
 ## Layout

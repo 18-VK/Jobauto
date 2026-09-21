@@ -1,0 +1,61 @@
+# Portal adapter config. Selectors are the ONLY thing that rots when a portal
+# redesigns -- keep all of it here so a fix is a one-line YAML edit.
+# Verify with:  python -m jobauto doctor --portal naukri
+id: naukri
+name: "Naukri.com"
+enabled: true
+base_url: "https://www.naukri.com"
+adapter: "jobauto.portals.naukri:NaukriAdapter"
+
+auth:
+  # Persistent browser profile; you log in by hand once. No stored password.
+  mode: persistent_profile
+  login_url: "https://www.naukri.com/nlogin/login"
+  # Naukri keeps changing the visible profile marker; use a few profile-linked
+  # selectors so a stale one does not falsely log the browser out mid-search.
+  logged_in_selector: "a[href*='/mnjuser/profile'], .view-profile-wrapper, .nI-gNb-drawer__bars, .nI-gNb-drawer__open"
+
+search:
+  # jobAge only accepts 1/3/7/15/30, so {days_bucket} snaps max_age_days to the
+  # nearest allowed value rather than being silently ignored.
+  url_template: "https://www.naukri.com/{role_slug}-jobs-in-{location_slug}?k={keywords}&experience={exp}&jobAge={days_bucket}"
+  results_container: ".styles_job-listing-container__OCfZC, .list"
+  result_card: "div.srp-jobtuple-wrapper, article.jobTuple"
+  fields:
+    title: "a.title"
+    url: {selector: "a.title", attr: "href"}
+    company: "a.comp-name, a.subTitle"
+    location: "span.locWdth, li.location"
+    experience: "span.expwdth, li.experience"
+    salary: "span.sal-wrap span, li.salary"
+    posted: "span.job-post-day, span.fleft.postedDate"
+    summary: "span.job-desc"
+  pagination:
+    next: "a.styles_btn-secondary__2AsIP, a.fright"
+    max_pages: 5
+
+detail:
+  jd_body: ".styles_JDC__dang-inner-html__h0K4t, .dang-inner-html"
+  skills: ".styles_key-skill__GIPn_ a, .key-skill span"
+
+apply:
+  # Naukri splits into instant apply (stays on site) and external redirects.
+  instant_button: "button#apply-button, .styles_apply-button__uJI3A"
+  external_button: "button.company-site-button"
+  # Chatbot-style follow-up questions after clicking apply.
+  question_container: ".chatbot_DrawerContentWrapper, .chatbot_Drawer"
+  question_text: ".botMsg span, .chatbot_MessageContainer"
+  answer_input: "div.textArea[contenteditable='true'], input.textArea"
+  answer_choice: ".ssrc__radio-btn-container label, .singleselect-radiobutton"
+  answer_submit: "div.sendMsg, .sendMsgbtn_container"
+  success_indicator: ".apply-message, .styles_applied__hUQ2F"
+
+# Naukri ranks profiles by recency -- a daily no-op profile touch measurably
+# lifts recruiter inbound. Acting on your own profile, entirely above board.
+profile_refresh:
+  enabled: true
+  url: "https://www.naukri.com/mnjuser/profile"
+  method: resave_headline
+  headline_selector: "span.edit.icon[title='Edit Resume Headline'], .resumeHeadline .edit"
+  save_selector: "button[type='submit'].btn-dark-ot"
+  frequency_hours: 24

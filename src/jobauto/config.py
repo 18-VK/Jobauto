@@ -12,8 +12,54 @@ from typing import Any
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
-CONFIG_DIR = ROOT / "config"
+PACKAGE_DIR = Path(__file__).resolve().parent
+ROOT = PACKAGE_DIR.parents[1]
+# Templates that ship inside the wheel, so `pip install jobauto` has portal
+# selectors and a preferences file without a repo checkout.
+DEFAULTS_DIR = PACKAGE_DIR / "defaults"
+
+
+def _running_from_checkout() -> bool:
+    """A source checkout keeps config/ and data/ beside the code, which is what
+    contributors expect. An installed copy must not write into site-packages."""
+    return (ROOT / "config" / "portals").is_dir() and (ROOT / "pyproject.toml").exists()
+
+
+def user_dir() -> Path:
+    """Where an installed copy keeps config, browser profiles and history."""
+    override = os.environ.get("JOBAUTO_HOME", "").strip()
+    base = Path(override) if override else Path.home() / ".jobauto"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _seed_config(target: Path) -> None:
+    """First run of an installed copy: lay down the packaged templates."""
+    import shutil
+
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "portals").mkdir(exist_ok=True)
+    if not DEFAULTS_DIR.is_dir():
+        return
+    for src in DEFAULTS_DIR.glob("*.yaml"):
+        dst = target / src.name
+        if not dst.exists():
+            shutil.copy2(src, dst)
+    for src in (DEFAULTS_DIR / "portals").glob("*.yaml"):
+        dst = target / "portals" / src.name
+        if not dst.exists():
+            shutil.copy2(src, dst)
+
+
+def _default_config_dir() -> Path:
+    if _running_from_checkout():
+        return ROOT / "config"
+    target = user_dir() / "config"
+    _seed_config(target)
+    return target
+
+
+CONFIG_DIR = _default_config_dir()
 
 
 class ConfigError(Exception):
@@ -196,6 +242,18 @@ def require_identity(cfg: Config) -> None:
 
 
 def data_dir() -> Path:
-    d = Path(os.environ.get("JOBAUTO_DATA_DIR", ROOT / "data"))
+    """Browser profiles, the local database and the agent link live here.
+
+    A checkout keeps them beside the code; an installed copy uses ~/.jobauto,
+    because writing into site-packages breaks on upgrade and needs admin on
+    some systems.
+    """
+    override = os.environ.get("JOBAUTO_DATA_DIR", "").strip()
+    if override:
+        d = Path(override)
+    elif _running_from_checkout():
+        d = ROOT / "data"
+    else:
+        d = user_dir() / "data"
     d.mkdir(parents=True, exist_ok=True)
     return d

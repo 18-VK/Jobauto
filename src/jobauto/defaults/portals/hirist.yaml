@@ -1,0 +1,33 @@
+id: hirist
+name: "Hirist"
+enabled: true
+base_url: "https://www.hirist.tech"
+adapter: "jobauto.portals.hirist:HiristAdapter"
+
+auth:
+  mode: persistent_profile
+  login_url: "https://www.hirist.tech/login"
+  logged_in_selector: ".user-menu, .profile-dropdown"
+
+search:
+  url_template: "https://www.hirist.tech/search/{role_slug}-jobs-in-{location_slug}?exp={exp}&jobAge={days_bucket}"
+  results_container: ".job-listing, .search-results"
+  result_card: ".job-card, .jobTuple"
+  fields:
+    title: ".job-title, h3 a"
+    url: {selector: "h3 a, .job-title a", attr: "href"}
+    company: ".company-name"
+    location: ".job-location"
+    experience: ".job-experience"
+    salary: ".job-salary"
+    posted: ".posted-date"
+  pagination:
+    next: ".pagination .next"
+    max_pages: 3
+
+detail:
+  jd_body: ".job-description, .jd-content"
+
+apply:
+  instant_button: "button.apply-btn, .btn-apply"
+  success_indicator: ".applied, .application-success"

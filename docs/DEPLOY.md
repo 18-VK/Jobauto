@@ -79,9 +79,46 @@ Open your URL and click **Create one** on the login page (or go straight to
 To let someone else in later, set `JOBAUTO_ALLOW_SIGNUP=1` and
 `JOBAUTO_SIGNUP_CODE=some-code` in Render → Environment.
 
-## 4. Link your PC
+## 4. Link a PC
 
-Open **Devices** in the dashboard and copy the two commands. On your PC:
+**The machine that runs the agent needs nothing but Python 3.10+.** No repo, no
+clone, no `PYTHONPATH` — your deployment serves its own installer.
+
+In PowerShell on that machine:
+
+```powershell
+irm https://<YOUR-URL>/install.ps1 | iex
+```
+
+It creates a private virtual environment under `~/.jobauto`, downloads the agent
+from your own site (`/agent.zip`), installs Playwright and a browser, asks for
+the agent token from your **Devices** tab, links the machine, and offers to
+start at login. Nothing else on the computer is touched, and deleting
+`~/.jobauto` removes all of it.
+
+The exact command, with your URL already filled in, is on the **Devices** tab.
+
+Afterwards, on that machine:
+
+```powershell
+jobauto login      # sign in to each portal once, by hand
+jobauto agent      # start syncing
+```
+
+Leave the agent running while you want applications to run. Closing it breaks
+nothing — queued work simply waits.
+
+### Sharing it with someone else
+
+The same one-liner works for anyone you want on your deployment. Open signups
+(`JOBAUTO_ALLOW_SIGNUP=1`, ideally with `JOBAUTO_SIGNUP_CODE`), let them create
+an account, and they take the install command and their own token from their
+own Devices tab. Their portal logins stay on their machine; your deployment only
+ever sees job listings and application status.
+
+### From a checkout instead
+
+If you do have the project cloned:
 
 ```powershell
 cd D:\Data\Claude
@@ -90,32 +127,14 @@ python -m jobauto link --url <YOUR-URL> --token <YOUR-TOKEN>
 python -m jobauto agent
 ```
 
-`link` saves the URL and token to `data/agent.json` (gitignored) and verifies
-the connection. `agent` starts polling. The dot in the dashboard header turns
-green.
-
-Leave that window open while you want applications to run. Closing it doesn't
-break anything — queued work simply waits.
-
-### Start the agent automatically at login
-
-```powershell
-$action  = New-ScheduledTaskAction -Execute "python" `
-             -Argument "-m jobauto agent" -WorkingDirectory "D:\Data\Claude"
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-Register-ScheduledTask -TaskName "jobauto-agent" -Action $action `
-    -Trigger $trigger -Description "jobauto cloud sync agent"
-```
-
-You'll want `PYTHONPATH=src` set as a user environment variable for this, or
-install the package with `pip install -e .`.
+Or `pip install -e .` once, and then just `jobauto` from anywhere.
 
 ## 5. Sign in to the job portals
 
-Once per portal, on your PC:
+Once per portal, on the agent machine:
 
 ```powershell
-python -m jobauto login
+jobauto login
 ```
 
 A real browser opens. Sign in by hand, OTP included. Cookies persist in
