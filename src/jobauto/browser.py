@@ -34,8 +34,15 @@ window.chrome = window.chrome || {runtime: {}};
 
 log = logging.getLogger("jobauto.browser")
 
-DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+# Deliberately unused by default. Overriding the user agent sets navigator
+# .userAgent and the User-Agent header, but NOT the sec-ch-ua client hints,
+# which keep reporting the browser's real version. A pinned string therefore
+# claims one Chrome version in one header and a different one in the next --
+# a mismatch no genuine browser produces, and a cheap thing for a bot check to
+# look for. Letting the browser introduce itself is both more honest and less
+# suspicious. Set JOBAUTO_USER_AGENT to override anyway.
+LEGACY_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
 
 
 class BrowserSession:
@@ -146,29 +153,35 @@ class BrowserSession:
         self.page.set_default_timeout(20000)
         return self.page
 
-    # Playwright's own Chromium lives under the user profile, which managed
-    # Windows machines routinely forbid executing from. Edge and Chrome sit in
-    # Program Files and are already approved, so they work where it does not.
-    # None means Playwright's bundled build.
-    _CHANNELS = (None, "msedge", "chrome")
+    # Prefer a real installed browser. Playwright's bundled Chromium is a
+    # stripped build -- different codec set, no branding, no Widevine -- so it
+    # is the easiest of the three for a portal to notice, and it lives under
+    # the user profile, which managed Windows machines routinely forbid
+    # executing from. Chrome and Edge sit in Program Files, are already
+    # approved, and look like what they are. None means the bundled build,
+    # kept last so a machine with no Chrome still works.
+    _CHANNELS = ("chrome", "msedge", None)
 
     # Windows ERROR_ACCESS_DISABLED_BY_POLICY: "blocked by group policy".
     _POLICY_EXIT_CODE = "1260"
 
     def _launch_options(self) -> dict[str, Any]:
-        return {
+        options: dict[str, Any] = {
             "user_data_dir": str(self.profile_dir),
             "headless": self.headless,
             "viewport": {"width": 1440, "height": 900},
             "locale": "en-IN",
             "timezone_id": "Asia/Kolkata",
-            "user_agent": DEFAULT_UA,
             "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--no-first-run",
                 "--no-default-browser-check",
             ],
         }
+        override = os.environ.get("JOBAUTO_USER_AGENT", "").strip()
+        if override:
+            options["user_agent"] = override
+        return options
 
     def _launch_with_fallback(self):
         """Try the bundled browser, then the ones the machine already trusts.

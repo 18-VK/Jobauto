@@ -747,12 +747,12 @@ def test_settle_application_ignores_unknown_fingerprints(db):
 
 # ------------------------------------- browser blocked by machine policy
 def test_launch_falls_back_through_installed_browsers():
-    """Playwright's own Chromium lives under the user profile, which some
-    managed machines forbid executing from."""
+    """A real installed browser is tried first: the bundled Chromium is both
+    the most conspicuous build and the one managed machines forbid running."""
     from jobauto.browser import BrowserSession
-    assert BrowserSession._CHANNELS[0] is None          # bundled first
+    assert BrowserSession._CHANNELS[0] == "chrome"
     assert "msedge" in BrowserSession._CHANNELS
-    assert "chrome" in BrowserSession._CHANNELS
+    assert BrowserSession._CHANNELS[-1] is None         # bundled last resort
 
 
 def test_policy_block_is_explained_not_dumped():

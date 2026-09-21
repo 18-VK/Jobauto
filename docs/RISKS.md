@@ -81,3 +81,48 @@ It is your account and your call. If you do:
 These are not missing features. Adding them would convert a tool that saves you
 time into one that is actively trying to defeat detection — which changes both
 the risk profile and what the thing actually is.
+
+## What happens after a bot check
+
+A challenge is treated as a signal, not an obstacle. When a portal serves one,
+that portal is parked in the `portal_state` table and skipped entirely — no
+browser is even opened for it — until the cool-off expires:
+
+| Bot checks in a row | Left alone for |
+|---|---|
+| 1st | 6 hours |
+| 2nd | 24 hours |
+| 3rd and after | 72 hours |
+
+The gap widens because repeatedly failing challenges is itself what escalates a
+soft check into a hard block. A clean run clears the record, so an unrelated
+check months later starts from the shortest gap again.
+
+This matters most on a schedule. Stopping a portal "for this run" is no
+protection when the next run is tomorrow at 08:00 — it walks straight back into
+the same challenge, every day, which is exactly the pattern that gets an account
+restricted.
+
+```bash
+python -m jobauto doctor                          # shows what is parked, and until when
+python -m jobauto doctor --clear-cooldown indeed  # try it again now, at your own risk
+```
+
+To stop searching a portal altogether, set `enabled: false` in
+`config/portals/<portal>.yaml`. For a portal that challenges every single time,
+that is the honest answer — the tool has no way to satisfy it and should not
+acquire one.
+
+### Why the browser no longer pins a user agent
+
+Playwright's `user_agent` option rewrites `navigator.userAgent` and the
+`User-Agent` header, but **not** the `sec-ch-ua` client hints, which keep
+reporting the browser's real version. A pinned string therefore claims one
+Chrome version in one header and a different one in the next — a contradiction
+no genuine browser produces, and a cheap one to check for. The browser now
+introduces itself, and a real installed Chrome or Edge is preferred over
+Playwright's bundled Chromium, which is a stripped build with a distinctive
+codec set. Set `JOBAUTO_USER_AGENT` to override.
+
+Note this is about not looking broken, not about looking human. It does not
+make a determined bot check pass, and is not meant to.

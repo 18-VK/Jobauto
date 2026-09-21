@@ -111,6 +111,14 @@ CREATE TABLE IF NOT EXISTS runs (
     notes           TEXT
 );
 
+CREATE TABLE IF NOT EXISTS portal_state (
+    portal          TEXT PRIMARY KEY,
+    challenged_at   TEXT,
+    cooling_until   TEXT,
+    strikes         INTEGER DEFAULT 0,
+    note            TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_app_status    ON applications(status);
 CREATE INDEX IF NOT EXISTS idx_app_company   ON applications(company);
 CREATE INDEX IF NOT EXISTS idx_app_submitted ON applications(submitted_at);
@@ -335,6 +343,64 @@ class Database:
                WHERE a.status = 'prepared' ORDER BY s.total DESC""").fetchall()
 
     # ------------------------------------------------------------- runs
+    # ---------------------------------------------------- portal cool-off
+    # Hours to leave a portal alone after it serves a bot check, by how many
+    # times in a row it has done so. Failing challenges repeatedly is itself
+    # the signal that escalates a soft check into a hard block, so the gap
+    # widens fast rather than retrying on the next scheduled run.
+    COOL_OFF_HOURS = (6, 24, 72)
+
+    def note_challenge(self, portal: str, note: str = "") -> datetime:
+        """Record a bot check and return when the portal may be tried again."""
+        now = datetime.now()
+        row = self._conn.execute(
+            "SELECT strikes FROM portal_state WHERE portal = ?", (portal,)
+        ).fetchone()
+        strikes = int(row["strikes"] or 0) + 1 if row else 1
+        hours = self.COOL_OFF_HOURS[min(strikes, len(self.COOL_OFF_HOURS)) - 1]
+        until = now + timedelta(hours=hours)
+        with self.tx() as c:
+            c.execute(
+                """INSERT INTO portal_state
+                       (portal, challenged_at, cooling_until, strikes, note)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(portal) DO UPDATE SET
+                       challenged_at = excluded.challenged_at,
+                       cooling_until = excluded.cooling_until,
+                       strikes       = excluded.strikes,
+                       note          = excluded.note""",
+                (portal, now.isoformat(timespec="seconds"),
+                 until.isoformat(timespec="seconds"), strikes, note[:300]))
+        return until
+
+    def cooling_until(self, portal: str) -> datetime | None:
+        """When this portal may be searched again, or None if it is free.
+
+        A lapsed cool-off is not cleared here: the strike count is what makes
+        a second bot check back off harder than the first, and forgetting it
+        on expiry would reset that escalation every time.
+        """
+        row = self._conn.execute(
+            "SELECT cooling_until FROM portal_state WHERE portal = ?", (portal,)
+        ).fetchone()
+        if not row or not row["cooling_until"]:
+            return None
+        try:
+            until = datetime.fromisoformat(row["cooling_until"])
+        except ValueError:
+            return None
+        return until if until > datetime.now() else None
+
+    def clear_challenge(self, portal: str) -> None:
+        """A clean run means the portal is happy with us again; drop the
+        strike count so an unrelated check months later starts over."""
+        with self.tx() as c:
+            c.execute("DELETE FROM portal_state WHERE portal = ?", (portal,))
+
+    def portal_states(self) -> list[sqlite3.Row]:
+        return list(self._conn.execute(
+            "SELECT * FROM portal_state ORDER BY portal"))
+
     def start_run(self, command: str, portals: list[str]) -> int:
         with self.tx() as c:
             cur = c.execute(

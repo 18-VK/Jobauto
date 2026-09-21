@@ -45,6 +45,23 @@ def within_active_hours(config: Config) -> tuple[bool, str]:
     return False, f"outside active hours {lo:02d}:00-{hi:02d}:00 (now {now:02d}:00)"
 
 
+def _cooling_note(name: str, until: datetime,
+                  first_time: bool = False) -> str:
+    """Say when a portal may be tried again, in both forms people need.
+
+    "in 5h" answers "is this broken?"; the clock time answers "when should I
+    run it again?". Neither alone is enough.
+    """
+    left = until - datetime.now()
+    minutes = max(0, int(left.total_seconds() // 60))
+    span = f"{minutes // 60}h {minutes % 60}m" if minutes >= 60 else f"{minutes}m"
+    when = until.strftime("%H:%M on %d %b")
+    if first_time:
+        return f"leaving {name} alone for {span}, until {when}"
+    return (f"skipped -- {name} served a bot check recently. "
+            f"Trying again in {span}, at {when}")
+
+
 @contextlib.contextmanager
 def _paced(adapter: Any):
     """Pause after an application attempt, whatever the outcome.
@@ -87,8 +104,8 @@ class Pipeline:
 
     # ------------------------------------------------------------ discover
     def _search_portal(self, portal: Any, roles: list[dict],
-                       headless: bool) -> tuple[str, list[Job], str]:
-        """Fetch one portal's jobs. Returns (portal_id, jobs, note).
+                       headless: bool) -> tuple[str, list[Job], str, bool]:
+        """Fetch one portal's jobs. Returns (portal_id, jobs, note, challenged).
 
         Deliberately does no scoring and touches no database: this runs on a
         worker thread, SQLite connections are not shareable across threads, and
@@ -97,6 +114,7 @@ class Pipeline:
         """
         jobs: list[Job] = []
         note = ""
+        challenged = False
         self._say(portal.id, "opening browser")
         try:
             with session(portal, self.config, headless=headless) as page:
@@ -114,6 +132,7 @@ class Pipeline:
                         break
                     except ChallengeDetected as exc:
                         note = str(exc)
+                        challenged = True
                         self._say(portal.id, str(exc))
                         break
                     except Exception as exc:
@@ -128,11 +147,16 @@ class Pipeline:
                     self._say(portal.id, note)
                 elif jobs:
                     self._say(portal.id, f"done -- {len(jobs)} jobs to score")
+        except ChallengeDetected as exc:
+            # Raised while opening the portal rather than mid-search.
+            note = str(exc)
+            challenged = True
+            self._say(portal.id, note)
         except RuntimeError as exc:
             note = str(exc)
         except Exception as exc:
             note = f"unavailable: {type(exc).__name__}: {exc}"
-        return portal.id, jobs, note
+        return portal.id, jobs, note, challenged
 
     def discover(self, portal_ids: list[str] | None = None,
                  headless: bool = False,
@@ -150,6 +174,21 @@ class Pipeline:
         if not portals:
             return counts
 
+        # A portal that served a bot check is left alone until its cool-off
+        # expires. Checked before launching anything: opening the browser at
+        # all is what the portal counts against us.
+        ready = []
+        for portal in portals:
+            until = self.db.cooling_until(portal.id)
+            if until:
+                self._say(portal.id, _cooling_note(portal.name, until))
+            else:
+                ready.append(portal)
+        portals = ready
+        if not portals:
+            self.log("\n  every portal is cooling off after a bot check")
+            return counts
+
         if parallel is None:
             parallel = bool(self.config.search.get("parallel", True))
         workers = min(len(portals), MAX_PARALLEL_PORTALS) if parallel else 1
@@ -162,7 +201,8 @@ class Pipeline:
         # profile so the sessions never collide, but scoring and storage stay
         # on this thread: SQLite connections are not shareable, and dedupe must
         # see the jobs in one order to collapse them correctly.
-        def absorb(portal_id: str, jobs: list[Job], note: str) -> None:
+        def absorb(portal_id: str, jobs: list[Job], note: str,
+                   challenged: bool = False) -> None:
             """Score and store one portal's results, on this thread.
 
             Called as each portal finishes rather than once at the end, so the
@@ -174,6 +214,15 @@ class Pipeline:
                 self._ingest(job, applied_companies, counts, portal_id)
             if note:
                 self._say(portal_id, note)
+            if challenged:
+                until = self.db.note_challenge(portal_id, note)
+                self._say(portal_id, _cooling_note("it", until,
+                                                   first_time=True))
+            elif jobs:
+                # A clean run means the portal is content again; forget the
+                # strikes so an unrelated check later starts from the shortest
+                # cool-off rather than the longest.
+                self.db.clear_challenge(portal_id)
 
         if workers == 1:
             for portal in portals:
@@ -343,6 +392,18 @@ class Pipeline:
         return (", ".join(parts) +
                 ". Lower thresholds.shortlist or run discover for fresh jobs.")
 
+    def _cool_off(self, adapter: Any, note: str) -> None:
+        """Park a portal after a bot check so the next scheduled run does not
+        walk straight back into it."""
+        portal_id = getattr(adapter, "id", "") or ""
+        if not portal_id:
+            return
+        try:
+            until = self.db.note_challenge(portal_id, note)
+        except Exception:
+            return
+        self.log(f"    {_cooling_note('it', until, first_time=True)}")
+
     def _apply_on_portal(self, adapter: Any, rows: list[Any],
                          gate: ReviewGate, results: dict[str, int],
                          queued: bool = False) -> bool:
@@ -367,6 +428,7 @@ class Pipeline:
                     job = adapter.fetch_detail(job)
                 except ChallengeDetected as exc:
                     self.log(f"    {exc}")
+                    self._cool_off(adapter, str(exc))
                     return False
                 except Exception:
                     pass    # a missing JD body is not fatal; the card data stands
@@ -379,6 +441,7 @@ class Pipeline:
                     on_form, note = adapter.open_application(job)
                 except ChallengeDetected as exc:
                     self.log(f"    {exc}")
+                    self._cool_off(adapter, str(exc))
                     return False
                 except LoginRequired as exc:
                     # Every remaining job on this portal would fail the same way,

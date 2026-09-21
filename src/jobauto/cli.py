@@ -106,6 +106,28 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     ok, why = within_active_hours(cfg)
     print(f"  active hours: {'inside' if ok else 'OUTSIDE -- ' + why}")
 
+    # "discover found nothing and did not even open a browser" is otherwise
+    # indistinguishable from a broken install.
+    db = Database()
+    try:
+        if getattr(args, "clear_cooldown", ""):
+            target = args.clear_cooldown
+            db.clear_challenge(target)
+            print(f"\n  cool-off cleared for {target}")
+        parked = [r for r in db.portal_states() if db.cooling_until(r["portal"])]
+        if parked:
+            print("\n  cooling off after a bot check:")
+            for row in parked:
+                until = db.cooling_until(row["portal"])
+                print(f"    {row['portal']:<12} until {until:%H:%M on %d %b}"
+                      f"  ({row['strikes']} in a row)")
+            print("    clear one with: python -m jobauto doctor "
+                  "--clear-cooldown <portal>")
+            print("    or stop searching it at all: set enabled: false in "
+                  "config/portals/<portal>.yaml")
+    finally:
+        db.close()
+
     try:
         require_identity(cfg)
         print("\n  profile: identity complete")
@@ -434,6 +456,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="run without a visible window (more detectable)")
 
     sp = sub.add_parser("doctor", help="validate config, no browser")
+    sp.add_argument("--clear-cooldown", default="", metavar="PORTAL",
+                    help="try a portal again now, ignoring its bot-check "
+                         "cool-off")
     sp.set_defaults(func=cmd_doctor)
 
     sp = sub.add_parser("login", help="one-time manual sign-in per portal")
