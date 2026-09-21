@@ -389,3 +389,45 @@ def test_the_ui_uses_a_line_based_block_replace():
           / "src/jobauto/cloud/static/cloud.js").read_text(encoding="utf-8")
     assert "function replaceYamlBlock" in js
     assert "[\s\S]*?(?=^\S" not in js
+
+
+# ------------------------------------------------- the doc must stay true
+def _doc() -> str:
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1]
+            / "docs" / "SCHEDULING.md").read_text(encoding="utf-8")
+
+
+def test_documented_constants_match_the_code():
+    """A timing table that drifts from the code is worse than none -- someone
+    will reason from it."""
+    from jobauto.agent import runner
+    from jobauto.cloud import app as cloud_app
+
+    doc = _doc()
+    for value, unit, actual in [
+        (runner.DEFAULT_INTERVAL, "s", 30),
+        (runner.MAX_BACKOFF, "s", 120),
+        (runner.PROGRESS_INTERVAL, "s", 5),
+        (cloud_app.CLAIM_GRACE_SECONDS, "s", 60),
+        (cloud_app.AGENT_SILENT_MINUTES, "min", 5),
+        (cloud_app.TASK_MAX_HOURS, "h", 6),
+        (cloud_app.QUEUE_MAX_HOURS, "h", 24),
+        (cloud_app._PURGE_INTERVAL_HOURS, "h", 12),
+    ]:
+        assert value == actual, "constant changed; update docs/SCHEDULING.md"
+        assert f"| {value} {unit} |" in doc, f"{value} {unit} missing from the table"
+
+
+def test_every_documented_function_exists():
+    doc = _doc()
+    for name in ("is_due", "next_step", "maybe_start", "next_run",
+                 "settings_for"):
+        assert name in doc
+        assert hasattr(schedule, name)
+
+
+def test_the_documented_column_exists():
+    from jobauto.cloud.db import User
+    assert "schedule_last_run" in _doc()
+    assert "schedule_last_run" in User.__table__.columns
