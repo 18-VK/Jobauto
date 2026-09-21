@@ -487,3 +487,5 @@ main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
 }
 .task-row { cursor: default; }
 .task-row:hover { border-color: var(--accent); }
+
+.task-row .state.expired { background: var(--warn-soft); color: var(--warn); }

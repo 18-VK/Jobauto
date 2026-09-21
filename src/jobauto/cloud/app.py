@@ -225,6 +225,7 @@ def create_app() -> Flask:
         with session() as s:
             uid = g.user.id
             _reap_stale_tasks(s, uid)
+            _expire_queued_tasks(s, uid)
             counts = {
                 "jobs": s.scalar(select(func.count(CloudJob.id))
                                  .where(CloudJob.user_id == uid,
@@ -490,6 +491,7 @@ def create_app() -> Flask:
             # cleared by the very thing that had stopped -- so it sat "running"
             # indefinitely and the dashboard looked wedged.
             _reap_stale_tasks(s, g.user.id)
+            _expire_queued_tasks(s, g.user.id)
             tasks = s.scalars(
                 select(Task).where(Task.user_id == g.user.id)
                 .order_by(desc(Task.created_at)).limit(25)).all()
@@ -587,6 +589,7 @@ def create_app() -> Flask:
             # running, whatever the status says.
             _reap_orphaned_tasks(s, uid)
             _reap_stale_tasks(s, uid)
+            _expire_queued_tasks(s, uid)
             task = s.scalar(select(Task)
                             .where(Task.user_id == uid, Task.status == "queued")
                             .order_by(Task.created_at).limit(1))
@@ -789,6 +792,10 @@ def create_app() -> Flask:
 AGENT_SILENT_MINUTES = 5
 # A task claimed this recently may belong to a poll still in flight.
 CLAIM_GRACE_SECONDS = 60
+# A queued task waits for a PC that may be off, which is the whole point of
+# queueing -- but not forever. Long enough to queue from a phone in the morning
+# and have it run that evening.
+QUEUE_MAX_HOURS = 24
 # Backstop for an agent that is alive but wedged on a task it will never finish.
 TASK_MAX_HOURS = 6
 
@@ -819,6 +826,30 @@ def _reap_orphaned_tasks(s, user_id: int) -> int:
     if orphaned:
         s.commit()
     return len(orphaned)
+
+
+def _expire_queued_tasks(s, user_id: int) -> int:
+    """Give up on work nothing ever collected.
+
+    Queued tasks deliberately survive an offline PC -- queueing from a phone
+    and having it run later is the point. But a request nobody answers should
+    not sit in the list indefinitely pretending it is still going to happen.
+    """
+    cutoff = utcnow() - timedelta(hours=QUEUE_MAX_HOURS)
+    stale = s.scalars(select(Task).where(
+        Task.user_id == user_id,
+        Task.status == "queued",
+        Task.created_at < cutoff)).all()
+
+    for task in stale:
+        task.status = "expired"
+        task.finished_at = utcnow()
+        task.log = ((task.log or "") +
+                    f"\nno agent collected this within {QUEUE_MAX_HOURS} hours"
+                    " -- your PC was never online to run it").strip()
+    if stale:
+        s.commit()
+    return len(stale)
 
 
 def _reap_stale_tasks(s, user_id: int) -> int:

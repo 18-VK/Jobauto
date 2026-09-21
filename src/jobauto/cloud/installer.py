@@ -283,15 +283,61 @@ if ($auto -match '^[Yy]') {
     }
 }
 
+# ---------------------------------------------------------- portal logins
+# Two essential steps remain, and ending on "DONE" with a list of commands
+# reads as finished -- so people stop here, and then nothing ever happens.
+# Offer to do them instead.
 Write-Host ''
-Write-Host '  DONE' -ForegroundColor Green
+Write-Host '  ------------------------------------------------------------' -ForegroundColor DarkGray
+Write-Host '  Installed and linked. Two things left, and nothing works' -ForegroundColor Cyan
+Write-Host '  until both are done.' -ForegroundColor Cyan
+Write-Host '  ------------------------------------------------------------' -ForegroundColor DarkGray
 Write-Host ''
-Write-Host '  Next, sign in to each job portal once (a browser opens; do it by hand):'
-Write-Host "    $Exe login" -ForegroundColor Cyan
+Write-Host '  1. Sign in to the job portals.' -ForegroundColor White
+Write-Host '     A real browser opens, one portal at a time. Sign in by hand,'
+Write-Host '     OTP included. No password is stored -- only the session, the'
+Write-Host '     same way your normal browser keeps you signed in.'
 Write-Host ''
-Write-Host '  Then start syncing:'
-Write-Host "    $Exe agent" -ForegroundColor Cyan
+$doLogin = Read-Host '     Do this now? (Y/n)'
+if ($doLogin -notmatch '^[Nn]') {
+    Write-Host ''
+    & $Exe login
+    Write-Host ''
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '     Sign-in did not complete. You can retry any time:' -ForegroundColor Yellow
+        Write-Host "       $Exe login" -ForegroundColor DarkGray
+    }
+} else {
+    Write-Host ''
+    Write-Host '     Skipped. Searches will find nothing until you run:' -ForegroundColor Yellow
+    Write-Host "       $Exe login" -ForegroundColor DarkGray
+}
+
+# ----------------------------------------------------------------- agent
+Write-Host ''
+Write-Host '  2. Start the agent.' -ForegroundColor White
+Write-Host '     It polls your site for work and does the searching and'
+Write-Host '     form filling. Leave it running; close it whenever you like.'
+Write-Host ''
+$doAgent = Read-Host '     Start it now? (Y/n)'
+
 Write-Host ''
 Write-Host '  Everything lives in ~/.jobauto -- delete that folder to remove it all.' -ForegroundColor DarkGray
+Write-Host "  Dashboard: $Base" -ForegroundColor DarkGray
+Write-Host ''
+
+if ($doAgent -notmatch '^[Nn]') {
+    Write-Host '  Starting the agent. Ctrl-C to stop it.' -ForegroundColor Green
+    Write-Host '  Watch progress at ' -NoNewline -ForegroundColor DarkGray
+    Write-Host "$Base" -ForegroundColor Cyan
+    Write-Host ''
+    # Runs in this window so its output is visible. This is the last step, so
+    # blocking here is what the user wants.
+    & $Exe agent
+    Finish 0
+}
+
+Write-Host '  Start it when you are ready:' -ForegroundColor DarkGray
+Write-Host "    $Exe agent" -ForegroundColor Cyan
 Finish 0
 """

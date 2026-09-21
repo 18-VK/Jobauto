@@ -564,9 +564,16 @@ async function loadDevices() {
   const live = $('#live-log');
   const note = $('#live-note');
   if (active) {
-    const label = active.status === 'queued'
-      ? `${active.kind} is queued — waiting for your PC to pick it up`
-      : `${active.kind} is running on your PC`;
+    let label;
+    if (active.status === 'queued') {
+      label = agentOnline
+        ? `${active.kind} is queued — your PC should pick it up within a minute`
+        : `${active.kind} is queued, but your PC is OFFLINE so nothing will run it. `
+          + `Start the agent on that machine: jobauto agent`;
+    } else {
+      label = `${active.kind} is running on your PC`;
+    }
+    note.className = (active.status === 'queued' && !agentOnline) ? 'msg bad' : 'muted';
     note.textContent = label;
     live.hidden = !active.log;
     if (active.log) {

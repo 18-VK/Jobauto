@@ -1182,3 +1182,60 @@ def test_tasks_endpoint_exposes_the_log_for_the_ui(client):
     task = next(t for t in client.get("/api/tasks").get_json()["tasks"]
                 if t["id"] == task_id)
     assert set(task) >= {"id", "kind", "status", "log", "claimed_at", "created_at"}
+
+
+# ============================================ queued work nobody collects
+def test_queued_task_survives_an_offline_pc(client):
+    """Queueing from a phone and having it run that evening is the point --
+    a short timeout would break the feature it exists for."""
+    from datetime import timedelta
+    from jobauto.cloud import app as cloud_app
+    from jobauto.cloud.db import Task, session, utcnow
+
+    signup(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+
+    with session() as s:                          # several hours, no agent
+        s.get(Task, task_id).created_at = utcnow() - timedelta(
+            hours=cloud_app.QUEUE_MAX_HOURS - 2)
+        s.commit()
+
+    assert _task_status(client, task_id) == "queued"
+
+
+def test_queued_task_expires_when_nothing_ever_collects_it(client):
+    from datetime import timedelta
+    from jobauto.cloud import app as cloud_app
+    from jobauto.cloud.db import Task, session, utcnow
+
+    signup(client)
+    task_id = client.post("/api/tasks", json={"kind": "discover"}).get_json()["task_id"]
+
+    with session() as s:
+        s.get(Task, task_id).created_at = utcnow() - timedelta(
+            hours=cloud_app.QUEUE_MAX_HOURS + 1)
+        s.commit()
+
+    assert _task_status(client, task_id) == "expired"
+    task = next(t for t in client.get("/api/tasks").get_json()["tasks"]
+                if t["id"] == task_id)
+    assert "never online" in task["log"]
+
+
+def test_expired_tasks_free_up_the_queue(client):
+    """The queue cap counts queued tasks, so strays must not block new work."""
+    from datetime import timedelta
+    from jobauto.cloud import app as cloud_app
+    from jobauto.cloud.db import Task, session, utcnow
+
+    signup(client)
+    for _ in range(5):
+        tid = client.post("/api/tasks", json={"kind": "discover"}).get_json().get("task_id")
+        if tid:
+            with session() as s:
+                s.get(Task, tid).created_at = utcnow() - timedelta(
+                    hours=cloud_app.QUEUE_MAX_HOURS + 1)
+                s.commit()
+
+    client.get("/api/tasks")                      # reaping happens on read
+    assert client.post("/api/tasks", json={"kind": "discover"}).status_code == 200

@@ -208,3 +208,24 @@ def test_autostart_falls_back_to_the_startup_folder():
     assert "WScript.Shell" in script
     # And if both routes fail, it must still say how to start it by hand.
     assert "Start it by hand instead" in script
+
+
+def test_installer_offers_to_run_the_remaining_steps():
+    """Ending on DONE plus a list of commands reads as finished, so people
+    stop there and nothing ever runs. The installer has to offer to do them."""
+    script = installer.installer_script("https://x.example")
+    assert "Do this now? (Y/n)" in script
+    assert "Start it now? (Y/n)" in script
+    assert "$Exe login" in script
+    assert "$Exe agent" in script
+
+
+def test_installer_says_both_steps_are_required():
+    script = installer.installer_script("https://x.example")
+    assert "nothing works" in script
+    assert "until both are done" in script
+
+
+def test_skipping_login_warns_rather_than_going_quiet():
+    script = installer.installer_script("https://x.example")
+    assert "Searches will find nothing until you run" in script
