@@ -34,12 +34,12 @@ TERMINAL_STATUSES = ("submitted", "skipped")
 _USER_CHOSEN_STATES = ("queued", "applied", "skipped", "external")
 
 # Application statuses that mean the jobs list is finished with this job.
-# Wider than TERMINAL_STATUSES, and deliberately so: `external` is not a
-# decision you made, but there is still nothing left to do about it *there* --
-# the application has been handed to you and lives in Applications now.
-# Leaving it in Jobs shows the same job in two places, one of which cannot
+# Wider than TERMINAL_STATUSES, and deliberately so: `external` and `failed`
+# are not decisions you made, but there is still nothing left to do about them
+# in the jobs list -- they live in Applications now and need a human follow-up.
+# Leaving them in Jobs shows the same job in two places, one of which cannot
 # act on it.
-_RETIRES_JOB_STATUSES = ("submitted", "skipped", "external")
+_RETIRES_JOB_STATUSES = ("submitted", "skipped", "external", "failed")
 
 # Retention runs off the agent's poll rather than a scheduler, because free
 # tiers have no cron and a sleeping instance runs no background threads. The
@@ -272,7 +272,7 @@ def create_app() -> Flask:
                                              Application.status == "submitted")) or 0,
                 "pending": s.scalar(select(func.count(Application.id))
                                     .where(Application.user_id == uid,
-                                           Application.status == "prepared")) or 0,
+                                           Application.status.in_(("prepared", "failed", "external")))) or 0,
             }
             agents = s.scalars(select(Agent).where(Agent.user_id == uid)).all()
             tasks = s.scalars(
@@ -813,14 +813,14 @@ def create_app() -> Flask:
                 item.resume_path = (row.get("resume_path") or "")[:300]
 
                 # A prepared application is no longer waiting in the queue,
-                # and one handed off to an employer site is finished with in
-                # the jobs list entirely -- it lives in Applications now,
-                # where the "apply by hand" link is.
+                # and failed or hand-off states are also finished with in the
+                # jobs list entirely -- they live in Applications now, where
+                # the follow-up action is shown.
                 job = s.scalar(select(CloudJob).where(
                     CloudJob.user_id == uid, CloudJob.fingerprint == fp))
                 if job is not None:
-                    if item.status == "external":
-                        job.state = "external"
+                    if item.status in ("external", "failed"):
+                        job.state = item.status
                     elif job.state == "queued":
                         job.state = "done"
             s.commit()

@@ -209,6 +209,20 @@ def test_an_external_handoff_leaves_the_jobs_list(client, user_id):
     assert client.get("/api/jobs").get_json()["jobs"] == []
 
 
+def test_a_failed_application_leaves_the_jobs_list(client, user_id):
+    with session() as s:
+        _job(client, s, user_id)
+        _application(s, user_id, status="failed")
+    assert client.get("/api/jobs").get_json()["jobs"] == []
+
+
+def test_a_failed_application_is_still_pending_not_done(client, user_id):
+    with session() as s:
+        _application(s, user_id, status="failed")
+    apps = client.get("/api/applications").get_json()["applications"]
+    assert [a["status"] for a in apps] == ["failed"]
+
+
 def test_an_external_handoff_is_still_pending_not_done(client, user_id):
     """It needs you to go and apply. Filing it as done loses it."""
     with session() as s:
