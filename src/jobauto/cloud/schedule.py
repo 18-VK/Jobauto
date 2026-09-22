@@ -23,9 +23,9 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from .db import Task, User, utcnow
+from .db import CloudJob, Task, User, utcnow
 
 log = logging.getLogger("jobauto.schedule")
 
@@ -193,6 +193,11 @@ def next_step(s, user: User, finished: Task) -> Task | None:
 
     Only ever called with a task that has reported back, so a stalled agent
     cannot cause batches to accumulate.
+
+    A run should not stop simply because the last batch produced zero prepared
+    applications while the dashboard still has discovered jobs waiting. The
+    dashboard is the live backlog: if it still contains new or queued jobs,
+    keep the apply chain going until the daily cap is reached.
     """
     try:
         payload = json.loads(finished.payload_json or "{}")
@@ -216,15 +221,21 @@ def next_step(s, user: User, finished: Task) -> Task | None:
         batch = int(payload.get("batch", 1)) + 1
         if batch > max_batches:
             return None
-        # Stop when a batch produced nothing: either the shortlist is empty or
-        # a daily cap has been reached, and further batches would be noise.
+
         try:
             result = json.loads(finished.result_json or "{}")
         except Exception:
             result = {}
         produced = sum(int(result.get(k, 0) or 0)
                        for k in ("prepared", "submitted", "external"))
-        if finished.status != "done" or produced == 0:
+
+        dashboard_jobs = s.scalar(select(func.count(CloudJob.id)).where(
+            CloudJob.user_id == user.id,
+            CloudJob.dropped == False,
+            CloudJob.state.in_(("new", "queued")),
+        )) or 0
+
+        if finished.status != "done" or (produced == 0 and dashboard_jobs == 0):
             return None
 
     task = Task(user_id=user.id, kind="apply", payload_json=json.dumps(

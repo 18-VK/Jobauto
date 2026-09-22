@@ -271,6 +271,33 @@ def test_the_chain_stops_when_a_batch_produces_nothing(client):
     assert client.get("/api/agent/work", headers=H(tok)).get_json()["task"] is None
 
 
+def test_the_chain_keeps_going_when_dashboard_jobs_are_still_waiting(client):
+    enable_schedule(client)
+    tok = token(client)
+
+    task = client.get("/api/agent/work", headers=H(tok)).get_json()["task"]
+    client.post(f"/api/agent/tasks/{task['id']}/result", headers=H(tok),
+                json={"status": "done", "result": {"found": 40, "shortlisted": 12}})
+
+    task = client.get("/api/agent/work", headers=H(tok)).get_json()["task"]
+    with clouddb.session() as s:
+        from sqlalchemy import select
+        from jobauto.cloud.db import CloudJob, User
+        user = s.scalar(select(User))
+        s.add(CloudJob(user_id=user.id, fingerprint="dash-keep-going",
+                       portal="linkedin", title="Backlog job",
+                       company="Acme", url="https://example.com/job",
+                       state="new", score=90.0, band="strong"))
+        s.commit()
+
+    client.post(f"/api/agent/tasks/{task['id']}/result", headers=H(tok),
+                json={"status": "done", "result": {"prepared": 0}})
+
+    nxt = client.get("/api/agent/work", headers=H(tok)).get_json()["task"]
+    assert nxt is not None and nxt["kind"] == "apply"
+    assert nxt["payload"]["batch"] == 2
+
+
 def test_apply_batches_can_wait_for_an_interval(client):
     enable_schedule(client, apply_interval_minutes=15)
     tok = token(client)
