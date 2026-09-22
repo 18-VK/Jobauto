@@ -240,7 +240,7 @@ class Database:
                          WHERE status = 'failed' AND updated_at >= ?)"""
             params.extend(TERMINAL_STATUSES)
             params.append(retry_cutoff)
-        sql += " ORDER BY s.total DESC LIMIT ?"
+        sql += " ORDER BY CASE WHEN j.posted_date IS NULL THEN '0000-00-00' ELSE j.posted_date END DESC, s.total DESC LIMIT ?"
         params.append(limit)
         return self._conn.execute(sql, params).fetchall()
 

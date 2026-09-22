@@ -14,7 +14,7 @@ import pytest
 
 from jobauto.config import Config, PortalConfig
 from jobauto.db import Database
-from jobauto.models import AppStatus, Job
+from jobauto.models import AppStatus, Job, ScoreBreakdown
 from jobauto.pipeline import Pipeline, within_active_hours
 from jobauto.portals.base import PortalAdapter
 
@@ -153,6 +153,24 @@ def test_browser_cleanup_kills_stale_chromium_for_same_profile(monkeypatch, tmp_
     assert "Stop-Process" in " ".join(captured["cmd"])
 
 
+def test_shortlist_prefers_newest_posted_jobs_first(db):
+    """The apply queue should prefer fresh postings before older ones when the
+    score is otherwise similar."""
+    older = Job(portal="fake", portal_job_id="older", title="Backend Developer",
+                company="OldCo", url="https://x/older", location="Noida",
+                posted_date=date(2026, 9, 1))
+    newer = Job(portal="fake", portal_job_id="newer", title="Backend Developer",
+                company="NewCo", url="https://x/newer", location="Noida",
+                posted_date=date(2026, 9, 20))
+    for job in (older, newer):
+        db.upsert_job(job)
+        db.save_score(job.fingerprint, ScoreBreakdown(total=80.0), "tailor")
+
+    rows = db.shortlist(min_score=0, limit=10)
+    assert rows[0]["fingerprint"] == newer.fingerprint
+    assert rows[1]["fingerprint"] == older.fingerprint
+
+
 def test_ensure_logged_in_allows_signed_in_profile_on_stale_selector():
     """A stale auth selector must not falsely log the user out if the page is a valid profile page."""
     from jobauto.config import PortalConfig
@@ -211,12 +229,17 @@ def test_hard_filters_applied_during_discover(config, db, monkeypatch):
 
 def test_shortlist_is_ranked(config, db, monkeypatch):
     run_discover(config, db, monkeypatch)
+    db._conn.execute(
+        "UPDATE jobs SET posted_date = ? WHERE company = 'Acme'",
+        (date(2026, 9, 1).isoformat(),),
+    )
+    db._conn.execute(
+        "UPDATE jobs SET posted_date = ? WHERE company = 'Stark'",
+        (date(2026, 9, 20).isoformat(),),
+    )
     rows = db.shortlist(min_score=60, limit=10)
     assert rows, "expected at least one shortlisted job"
-    totals = [r["total"] for r in rows]
-    assert totals == sorted(totals, reverse=True)
-    # Remote + top salary should outrank the Noida listing.
-    assert rows[0]["company"] == "Stark"
+    assert [r["company"] for r in rows[:2]] == ["Stark", "Acme"]
 
 
 def test_designer_falls_below_threshold(config, db, monkeypatch):

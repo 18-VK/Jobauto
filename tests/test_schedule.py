@@ -320,14 +320,15 @@ def test_a_scheduled_run_does_not_stack_on_pending_work(client):
 
 
 def test_shipped_preferences_ship_it_disabled():
-    """Nobody wants surprise applications from a default."""
+    """The default schedule should bias more of each run toward applying."""
     import yaml
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     parsed = yaml.safe_load((root / "config" / "preferences.yaml").read_text(
         encoding="utf-8"))
     assert parsed["schedule"]["enabled"] is False
-    assert parsed["schedule"]["batch_size"] == 5
+    assert parsed["schedule"]["batch_size"] == 8
+    assert parsed["schedule"]["max_batches"] == 6
 
 
 # -------------------------------------------- editing the preferences file

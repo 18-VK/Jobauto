@@ -477,7 +477,7 @@ screening answer on record is worse than no application.
 work through the shortlist in batches.
 
 ```
-  discover  ->  apply 5  ->  apply 5  ->  apply 5  ->  apply 5
+  discover  ->  apply 8  ->  apply 8  ->  apply 8  ->  apply 8  ->  apply 8  ->  apply 8
 ```
 
 ```yaml
@@ -486,8 +486,8 @@ schedule:
   time: "09:00"
   timezone: "Asia/Kolkata"
   days: ["mon", "tue", "wed", "thu", "fri"]
-  batch_size: 5            # applications per batch
-  max_batches: 4           # so up to 20 a day
+  batch_size: 8            # applications per batch
+  max_batches: 6           # so up to 48 a day
 ```
 
 Each batch is queued only once the previous one reports back, and the chain
