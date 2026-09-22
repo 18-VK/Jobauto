@@ -636,6 +636,10 @@ _NEEDS_REVIEW_MARKERS = (
     "answer it in the browser",
     "finish it in the browser",
     "could not type an answer into the chatbot",
+    "has no account",
+    "signed out -- the page has no apply button because it has no account",
+    "redirects to the employer site -- apply by hand",
+    "employer ats application -- apply by hand",
 )
 
 
@@ -645,10 +649,10 @@ def _classify(note: str) -> AppStatus:
         return AppStatus.SUBMITTED
     if any(m in text for m in _CLOSED_MARKERS):
         return AppStatus.SKIPPED
-    if any(m in text for m in _EXTERNAL_MARKERS):
-        return AppStatus.EXTERNAL
     if any(m in text for m in _NEEDS_REVIEW_MARKERS):
         return AppStatus.PREPARED
+    if any(m in text for m in _EXTERNAL_MARKERS):
+        return AppStatus.EXTERNAL
     return AppStatus.FAILED
 
 

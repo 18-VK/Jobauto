@@ -74,6 +74,11 @@ def test_an_incomplete_fill_is_not_filed_as_prepared():
     assert _classify(note) != AppStatus.PREPARED
 
 
+def test_an_employer_redirect_is_pending_for_manual_follow_up():
+    note = "redirects to the employer site -- apply by hand"
+    assert _classify(note) == AppStatus.PREPARED
+
+
 def test_a_note_that_only_needs_a_look_stays_prepared():
     """Got far enough that the application may be half-made on the portal.
     Retrying risks a duplicate, so it goes to the review list."""
@@ -83,6 +88,12 @@ def test_a_note_that_only_needs_a_look_stays_prepared():
 def test_a_chatbot_waiting_on_blank_question_is_prepared():
     note = ("the chatbot is waiting on a question left blank on purpose "
             "-- answer it in the browser")
+    assert _classify(note) == AppStatus.PREPARED
+
+
+def test_a_missing_account_is_marked_pending_for_action():
+    note = ("signed out -- the page has no apply button because it has no "
+            "account. Run: python -m jobauto login --portal linkedin")
     assert _classify(note) == AppStatus.PREPARED
 
 
