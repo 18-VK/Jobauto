@@ -80,6 +80,17 @@ def test_a_note_that_only_needs_a_look_stays_prepared():
     assert _classify("needs a look before sending") == AppStatus.PREPARED
 
 
+def test_a_chatbot_waiting_on_blank_question_is_prepared():
+    note = ("the chatbot is waiting on a question left blank on purpose "
+            "-- answer it in the browser")
+    assert _classify(note) == AppStatus.PREPARED
+
+
+def test_a_chatbot_answer_failure_is_prepared():
+    note = "could not type an answer into the chatbot -- finish it in the browser"
+    assert _classify(note) == AppStatus.PREPARED
+
+
 def test_the_linkedin_message_does_not_point_at_a_vanished_tab():
     """It used to say "it is open in the browser, finish it there" -- but the
     run moves to the next job and closes that tab seconds later."""

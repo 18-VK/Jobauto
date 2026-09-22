@@ -133,9 +133,15 @@ class Job:
         return (date.today() - self.posted_date).days
 
     def text_blob(self) -> str:
-        """Everything searchable, lowercased -- used for keyword matching."""
+        """Everything searchable, lowercased -- used for keyword matching.
+
+        The normalised location field is part of the searchable blob so
+        location-based preferences and blocked-location checks still work when
+        the portal exposes the city/country only in the listing text rather than
+        as a dedicated `location` field.
+        """
         return " ".join([
-            self.title, self.company, self.summary,
+            self.title, self.company, self.location, self.summary,
             self.description, " ".join(self.skills),
         ]).lower()
 

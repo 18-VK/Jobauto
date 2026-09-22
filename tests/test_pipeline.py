@@ -665,6 +665,34 @@ def test_agent_never_blocks_on_input(config, db, monkeypatch):
     Pipeline(config, db).apply(limit=1, interactive=False)
 
 
+def test_browser_wait_note_keeps_app_prepared_and_does_not_prompt(
+        config, db, monkeypatch):
+    """A chatbot stuck waiting in the browser is pending work, not a reason
+    to stop the whole apply batch."""
+    run_discover(config, db, monkeypatch)
+
+    class _WaitingChatbot(FakeAdapter):
+        def open_application(self, job):
+            return True, ""
+
+        def fill_application(self, answerer):
+            from jobauto.forms import AnswerResult
+            out = AnswerResult()
+            out.note = ("the chatbot is waiting on a question left blank on "
+                        "purpose -- answer it in the browser")
+            return out
+
+    _fake_portal(monkeypatch, _WaitingChatbot)
+
+    def boom(*_a, **_k):
+        raise AssertionError("should not prompt for a browser-stuck application")
+
+    monkeypatch.setattr("jobauto.pipeline.ReviewGate.ask", boom)
+    result = Pipeline(config, db).apply(limit=1, interactive=True)
+    assert result["prepared"] == 1
+    assert db.pending_review(), "must stay in the pending list"
+
+
 # --------------------------------------------- why a portal found nothing
 def _diag_adapter(config, search: dict):
     from jobauto.portals.generic import ConfigDrivenAdapter

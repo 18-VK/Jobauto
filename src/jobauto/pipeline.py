@@ -549,6 +549,14 @@ class Pipeline:
                     self.log(f"    {job.title[:40]:<40} {note}")
                     continue
 
+                if any(m in (note or "").lower() for m in (
+                        "waiting on a question left blank on purpose",
+                        "answer it in the browser",
+                        "finish it in the browser",
+                        "could not type an answer into the chatbot")):
+                    self.log(f"    {job.title[:40]:<40} {note}")
+                    continue
+
                 decision = gate.ask(app, i, len(rows))
                 if decision == Decision.OPEN:
                     self.log(f"    open: {job.url}")
@@ -622,7 +630,13 @@ _EXTERNAL_MARKERS = ("apply by hand",)
 # We got far enough that the application may well be half-made. Retrying risks
 # a duplicate and dropping it loses it, so it goes to the review list for you
 # to finish or discard -- which is what the review gate is for.
-_NEEDS_REVIEW_MARKERS = ("needs a look",)
+_NEEDS_REVIEW_MARKERS = (
+    "needs a look",
+    "waiting on a question left blank on purpose",
+    "answer it in the browser",
+    "finish it in the browser",
+    "could not type an answer into the chatbot",
+)
 
 
 def _classify(note: str) -> AppStatus:

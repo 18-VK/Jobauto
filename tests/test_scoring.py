@@ -137,6 +137,13 @@ def test_remote_beats_unlisted_city(scorer):
     assert remote.components["location_fit"] > other.components["location_fit"]
 
 
+def test_location_preference_matches_listing_text(scorer):
+    scorer.search["locations"]["preferred"] = ["United States"]
+    job = make_job(location="", description="Remote role, based in United States")
+    result = scorer.score(job)
+    assert result.components["location_fit"] == pytest.approx(15.0)
+
+
 def test_salary_below_floor_is_penalised(scorer):
     low = scorer.score(make_job(salary="5-8 Lacs PA"))
     high = scorer.score(make_job(salary="14-20 Lacs PA"))

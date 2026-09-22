@@ -8,6 +8,16 @@ The app discovers jobs, scores them against saved preferences, prepares applicat
 
 For the broad project overview and setup steps, start with [README.md](README.md). For deployment and hosting details, see [docs/DEPLOY.md](docs/DEPLOY.md), [docs/HOSTING.md](docs/HOSTING.md), and [docs/RISKS.md](docs/RISKS.md).
 
+## Agent working rules
+
+Keep changes aligned with the repo's product contract and do not broaden scope for convenience:
+
+- Follow the human-in-the-loop design: no silent auto-submit, no password storage, no headless login flow, and no bot-detection evasion.
+- Prefer configuration over code when adjusting portal behavior: selectors and portal rules live under [config/](config/), not in Python modules.
+- Keep policy in the pipeline and browser mechanics in adapters. If a change can be expressed as a config tweak or a small portal YAML change, prefer that over a broad Python refactor.
+- Treat the cloud and local agent as intentionally separate concerns. Cloud state should not hold portal cookies, browser profiles, or local auth state.
+- Validate with the smallest relevant pytest target first, then expand to the broader suite only if the change affects shared flow or config validation.
+
 ## Core workflow
 
 The canonical flow is:
