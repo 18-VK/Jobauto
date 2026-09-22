@@ -199,7 +199,7 @@ retention:
 # ----------------------------------------------------------------------------
 # A run is a chain: discover, then apply in batches.
 #
-#     discover  ->  apply 8  ->  apply 8  ->  apply 8  ->  apply 8  ->  apply 8  ->  apply 8
+#     discover  ->  apply 5  ->  apply 5  ->  apply 5  ->  apply 5  ->  ...
 #
 # Each batch is queued only once the previous one reports back, and the chain
 # stops early when a batch produces nothing -- the shortlist is empty, or a
@@ -222,5 +222,5 @@ schedule:
   discover: true           # search the portals first
   apply: true              # then work through the shortlist
 
-  batch_size: 8            # applications per batch
-  max_batches: 6           # so at most 48 a day at this batch size
+  batch_size: 5            # applications per batch
+  max_batches: 20          # so at most 100 a day at this batch size

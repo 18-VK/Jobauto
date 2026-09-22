@@ -327,8 +327,8 @@ def test_shipped_preferences_ship_it_disabled():
     parsed = yaml.safe_load((root / "config" / "preferences.yaml").read_text(
         encoding="utf-8"))
     assert parsed["schedule"]["enabled"] is False
-    assert parsed["schedule"]["batch_size"] == 8
-    assert parsed["schedule"]["max_batches"] == 6
+    assert parsed["schedule"]["batch_size"] == 5
+    assert parsed["schedule"]["max_batches"] == 20
 
 
 # -------------------------------------------- editing the preferences file

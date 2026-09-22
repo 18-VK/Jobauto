@@ -35,8 +35,8 @@ DEFAULTS = {
     "timezone": "Asia/Kolkata",
     "discover": True,
     "apply": True,
-    "batch_size": 8,
-    "max_batches": 6,          # 48 applications a day at the default size
+    "batch_size": 5,
+    "max_batches": 20,         # 100 applications a day at the default size
     "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
 }
 
