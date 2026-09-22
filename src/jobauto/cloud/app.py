@@ -667,7 +667,9 @@ def create_app() -> Flask:
             # Free tiers have no cron, so the agent's poll is the clock.
             schedule.maybe_start(s, uid)
             task = s.scalar(select(Task)
-                            .where(Task.user_id == uid, Task.status == "queued")
+                            .where(Task.user_id == uid,
+                                   Task.status == "queued",
+                                   Task.created_at <= utcnow())
                             .order_by(Task.created_at).limit(1))
             payload: dict[str, Any] = {"task": None, "queued_jobs": []}
 

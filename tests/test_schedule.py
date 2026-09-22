@@ -271,6 +271,33 @@ def test_the_chain_stops_when_a_batch_produces_nothing(client):
     assert client.get("/api/agent/work", headers=H(tok)).get_json()["task"] is None
 
 
+def test_apply_batches_can_wait_for_an_interval(client):
+    enable_schedule(client, apply_interval_minutes=15)
+    tok = token(client)
+
+    discover = client.get("/api/agent/work", headers=H(tok)).get_json()["task"]
+    client.post(f"/api/agent/tasks/{discover['id']}/result", headers=H(tok),
+                json={"status": "done", "result": {"found": 40, "shortlisted": 12}})
+
+    next_task = client.get("/api/agent/work", headers=H(tok)).get_json()["task"]
+    assert next_task is None
+
+    with clouddb.session() as s:
+        from sqlalchemy import select
+        from jobauto.cloud.db import Task, User
+        user = s.scalar(select(User))
+        queued = s.scalars(select(Task).where(
+            Task.user_id == user.id,
+            Task.status == "queued",
+            Task.kind == "apply",
+        )).all()
+        assert len(queued) == 1
+        scheduled = queued[0].created_at
+        if scheduled.tzinfo is None:
+            scheduled = scheduled.replace(tzinfo=timezone.utc)
+        assert scheduled > clouddb.utcnow() + timedelta(minutes=14)
+
+
 def test_a_failed_discover_does_not_start_applying(client):
     """Applying against a search that failed would work from stale data."""
     enable_schedule(client)

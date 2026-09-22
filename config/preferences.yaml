@@ -224,3 +224,4 @@ schedule:
 
   batch_size: 5            # applications per batch
   max_batches: 20          # so at most 100 a day at this batch size
+  apply_interval_minutes: 0  # wait N minutes before starting each next batch; 0 = immediate

@@ -499,6 +499,7 @@ async function loadSchedule() {
   $('#sched-time').value = s.time || '09:00';
   $('#sched-batch').value = s.batch_size || 5;
   $('#sched-batches').value = s.max_batches || 4;
+  $('#sched-interval').value = s.apply_interval_minutes || 0;
 
   const wrap = $('#sched-days');
   wrap.innerHTML = '';
@@ -561,6 +562,7 @@ $('#btn-sched-save').onclick = async () => {
     '  apply: true',
     `  batch_size: ${Number($('#sched-batch').value || 5)}`,
     `  max_batches: ${Number($('#sched-batches').value || 4)}`,
+    `  apply_interval_minutes: ${Number($('#sched-interval').value || 0)}`,
   ].join('\n');
 
   text = replaceYamlBlock(text, 'schedule', block);

@@ -37,6 +37,7 @@ DEFAULTS = {
     "apply": True,
     "batch_size": 5,
     "max_batches": 20,         # 100 applications a day at the default size
+    "apply_interval_minutes": 0,
     "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
 }
 
@@ -166,6 +167,12 @@ def is_due(settings: dict[str, Any], last_run: datetime | None,
     return last_run < scheduled   # already ran for this slot?
 
 
+def _apply_interval(settings: dict[str, Any]) -> timedelta:
+    """How long to wait before starting the next apply batch."""
+    minutes = max(0, int((settings.get("apply_interval_minutes") or 0)) )
+    return timedelta(minutes=minutes)
+
+
 def start_run(s, user: User, settings: dict[str, Any]) -> Task | None:
     """Queue the first step of a scheduled run."""
     kind = "discover" if settings.get("discover", True) else "apply"
@@ -222,9 +229,13 @@ def next_step(s, user: User, finished: Task) -> Task | None:
 
     task = Task(user_id=user.id, kind="apply", payload_json=json.dumps(
         {"scheduled": True, "limit": batch_size, "batch": batch}))
+    interval = _apply_interval(settings)
+    if interval:
+        task.created_at = utcnow() + interval
     s.add(task)
     s.commit()
-    log.info("scheduled apply batch %s queued for user %s", batch, user.id)
+    log.info("scheduled apply batch %s queued for user %s in %s", batch, user.id,
+             interval or "immediately")
     return task
 
 
