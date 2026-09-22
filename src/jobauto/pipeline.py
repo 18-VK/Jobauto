@@ -636,6 +636,8 @@ _NEEDS_REVIEW_MARKERS = (
     "answer it in the browser",
     "finish it in the browser",
     "could not type an answer into the chatbot",
+    "drawer never opened",
+    "question drawer never opened",
     "has no account",
     "signed out -- the page has no apply button because it has no account",
     "redirects to the employer site -- apply by hand",

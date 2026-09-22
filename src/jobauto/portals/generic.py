@@ -95,6 +95,23 @@ class ConfigDrivenAdapter(PortalAdapter):
                 return explanation.format(portal=self.id)
         return ""
 
+    def _looks_like_login_prompt(self) -> bool:
+        """Some portals keep the same URL but show a sign-in page instead of jobs."""
+        try:
+            body = (self.page.locator("body").inner_text() or "").lower()
+        except Exception:
+            return False
+        markers = (
+            "log in",
+            "sign in",
+            "forgot password",
+            "continue with linkedin",
+            "continue with google",
+            "email password",
+            "do not have an account",
+        )
+        return any(marker in body for marker in markers)
+
     def why_no_results(self) -> str:
         """Name the step that failed, in the order they happen."""
         where = f"config/portals/{self.id}.yaml"
@@ -120,6 +137,10 @@ class ConfigDrivenAdapter(PortalAdapter):
                     + ". A redirect mid-scrape usually means the URL is wrong "
                       "or you are signed out")
         if self.last_card_count == 0:
+            if self._looks_like_login_prompt():
+                return ("the sign-in page is showing instead of jobs -- the "
+                        f"saved session is expired. Run: python -m jobauto "
+                        f"login --portal {self.id}{self._landed()}")
             if self.last_container_seen is False:
                 return (f"nothing matched search.results_container or "
                         f"search.result_card ({where}){self._landed()}. "

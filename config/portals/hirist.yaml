@@ -11,16 +11,16 @@ auth:
 
 search:
   url_template: "https://www.hirist.tech/search/{role_slug}-jobs-in-{location_slug}?exp={exp}&jobAge={days_bucket}"
-  results_container: ".job-listing, .search-results"
-  result_card: ".job-card, .jobTuple"
+  results_container: ".job-listing, .search-results, main, .jobs-list"
+  result_card: ".job-card, .jobTuple, a[href*='/j/'], article:has(a[href*='/j/'])"
   fields:
-    title: ".job-title, h3 a"
-    url: {selector: "h3 a, .job-title a", attr: "href"}
-    company: ".company-name"
-    location: ".job-location"
-    experience: ".job-experience"
-    salary: ".job-salary"
-    posted: ".posted-date"
+    title: ".job-title, h3 a, a[href*='/j/']"
+    url: {selector: "h3 a, .job-title a, a[href*='/j/']", attr: "href"}
+    company: ".company-name, .job-company"
+    location: ".job-location, .location"
+    experience: ".job-experience, .experience"
+    salary: ".job-salary, .salary"
+    posted: ".posted-date, .job-age"
   pagination:
     next: ".pagination .next"
     max_pages: 3

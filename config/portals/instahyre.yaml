@@ -15,15 +15,15 @@ auth:
 
 search:
   url_template: "https://www.instahyre.com/candidate/opportunities/"
-  results_container: ".opportunities-list, .ng-scope"
-  result_card: ".opportunity-container, .opportunity"
+  results_container: ".opportunities-list, .ng-scope, main, .opportunity-feed"
+  result_card: ".opportunity-container, .opportunity, a[href*='/jobs/'], a[href*='/opportunity/']"
   fields:
-    title: ".opportunity-title, h3"
-    url: {selector: "a.opportunity-link", attr: "href"}
-    company: ".company-name"
-    location: ".opportunity-location"
-    experience: ".opportunity-experience"
-    salary: ".opportunity-ctc"
+    title: ".opportunity-title, h3, a[href*='/jobs/'], a[href*='/opportunity/']"
+    url: {selector: "a.opportunity-link, a[href*='/jobs/'], a[href*='/opportunity/']", attr: "href"}
+    company: ".company-name, .company"
+    location: ".opportunity-location, .location"
+    experience: ".opportunity-experience, .experience"
+    salary: ".opportunity-ctc, .ctc"
   pagination:
     next: ".load-more, button.btn-load-more"
     max_pages: 3

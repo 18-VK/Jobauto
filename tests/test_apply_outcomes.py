@@ -97,6 +97,12 @@ def test_a_missing_account_is_marked_pending_for_action():
     assert _classify(note) == AppStatus.PREPARED
 
 
+def test_a_question_drawer_that_never_opens_is_pending_for_review():
+    note = ("apply clicked but the question drawer never opened -- needs a look "
+            "in the browser")
+    assert _classify(note) == AppStatus.PREPARED
+
+
 def test_a_chatbot_answer_failure_is_prepared():
     note = "could not type an answer into the chatbot -- finish it in the browser"
     assert _classify(note) == AppStatus.PREPARED
