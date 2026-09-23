@@ -224,27 +224,25 @@ def _adapter(url="", title=""):
     return _A(portal, make_config(), _Page(url, title))
 
 
-def test_indeed_account_verification_is_not_reported_as_a_bot_check():
-    from jobauto.portals.base import VerificationRequired
+def test_indeeds_additional_verification_is_a_bot_check_that_backs_off():
+    """It comes back on every automated visit however many times a person
+    passes it. That is Cloudflare wearing a verification title, and calling
+    it a one-off account step sent people round in circles."""
+    from jobauto.portals.base import ChallengeDetected
 
     a = _adapter(title="Additional Verification Required")
+    with pytest.raises(ChallengeDetected):
+        a.guard_challenge()
+
+
+def test_a_genuine_account_verification_is_still_a_one_off():
+    from jobauto.portals.base import VerificationRequired
+
+    a = _adapter(url="https://secure.indeed.com/account/verify",
+                 title="Verify your email")
     with pytest.raises(VerificationRequired) as caught:
         a.guard_challenge()
-    assert "verified" in str(caught.value)
     assert "Waiting will not clear it" in str(caught.value)
-
-
-def test_verification_is_checked_before_the_bot_check_markers():
-    """Some verification pages are served from a URL containing "challenge".
-    Matching the bot-check marker first would send you off to wait three days
-    for something that only ever clears by hand."""
-    from jobauto.portals.base import ChallengeDetected, VerificationRequired
-
-    a = _adapter(url="https://secure.indeed.com/challenge/verify",
-                 title="Additional Verification Required")
-    with pytest.raises(VerificationRequired):
-        a.guard_challenge()
-    assert not isinstance(VerificationRequired("x"), ChallengeDetected)
 
 
 def test_a_real_bot_check_still_raises_a_challenge():
@@ -274,9 +272,17 @@ def test_verification_does_not_park_the_portal(db, monkeypatch):
     assert "verify the account" in " ".join(lines)
 
 
-def test_the_landing_diagnosis_puts_verification_before_bot_checks():
+def test_the_landing_diagnosis_calls_indeeds_interstitial_a_bot_check():
+    """The search-side diagnosis must agree with guard_challenge, or the
+    same page gets two different explanations depending on where it was
+    hit."""
     from jobauto.portals.generic import ConfigDrivenAdapter
 
-    first = ConfigDrivenAdapter._LANDING_SIGNS[0]
-    assert any("verification" in m for m in first[0])
-    assert "verified" in first[1]
+    portal = PortalConfig(id="indeed", name="Indeed", enabled=True,
+                          base_url="", adapter="x:Y")
+    d = ConfigDrivenAdapter(portal, make_config(),
+                            _Page(title="Additional Verification Required"))
+    d.last_url = "https://in.indeed.com/jobs?q=qa"
+    d.landed_title = "Additional Verification Required"
+    why = d._diagnose_landing()
+    assert "bot check" in why and "verified" not in why

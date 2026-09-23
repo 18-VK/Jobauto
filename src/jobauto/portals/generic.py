@@ -73,14 +73,14 @@ class ConfigDrivenAdapter(PortalAdapter):
         # Account verification first: these pages are sometimes served from a
         # URL containing "challenge", and calling one a bot check sends you to
         # wait out something that only ever clears by hand.
-        (("additional verification", "verification required",
-          "verify your email", "verify your account", "/account/verify",
+        (("verify your email", "verify your account", "/account/verify",
           "confirm your identity"),
          "the portal wants the account itself verified -- usually a code "
          "emailed to you. Open it in a normal browser, finish that once, then "
          "search again. Waiting will not clear it"),
         (("__cf_chl", "/challenge", "captcha", "px-captcha", "/checkpoint",
-          "security check", "are you a human", "verify you are"),
+          "security check", "are you a human", "verify you are",
+          "additional verification required", "just a moment"),
          "a bot check, not a results page. This portal has decided the "
          "traffic looks automated. Stop searching it for a while; retrying "
          "into a challenge is how accounts get restricted"),

@@ -107,13 +107,20 @@ class PortalAdapter(ABC):
     # they change whenever they like.
     _CHALLENGE_URL_MARKERS = ("__cf_chl", "/cdn-cgi/challenge", "px-captcha",
                               "/challenge-platform", "distil_r_captcha")
+    # Titles a bot check is served under. Indeed's "Additional Verification
+    # Required" is Cloudflare's, however it is dressed.
+    _CHALLENGE_TITLE_MARKERS = ("additional verification required",
+                                "just a moment", "security check",
+                                "verify you are human")
 
-    # Account verification, not traffic analysis. Indeed's "Additional
-    # Verification Required" is the common one: it wants an emailed code
-    # entered once, and no amount of pacing or backing off will satisfy it.
-    _VERIFY_MARKERS = ("additional verification", "verify your email",
-                       "verify your account", "/account/verify",
-                       "verification required", "confirm your identity")
+    # Account verification, not traffic analysis: an emailed code, a phone
+    # number, entered once. Deliberately NOT "additional verification" --
+    # Indeed puts that title on its Cloudflare interstitial, and it comes
+    # back on every automated visit however many times a person passes it.
+    # That is a bot check wearing a verification title, and treating it as a
+    # one-off sent people round in circles.
+    _VERIFY_MARKERS = ("verify your email", "verify your account",
+                       "/account/verify", "confirm your identity")
 
     def guard_challenge(self) -> None:
         """Abort the portal on a captcha/challenge rather than retrying."""
@@ -137,7 +144,8 @@ class PortalAdapter(ABC):
                 f"verification once, then run this again. Waiting will not "
                 f"clear it.")
 
-        if any(marker in current for marker in self._CHALLENGE_URL_MARKERS):
+        if (any(marker in current for marker in self._CHALLENGE_URL_MARKERS)
+                or any(m in title for m in self._CHALLENGE_TITLE_MARKERS)):
             raise ChallengeDetected(
                 f"{self.portal.name} served a bot check instead of results. "
                 f"Leaving it alone for this run -- retrying into a challenge "
