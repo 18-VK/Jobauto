@@ -61,13 +61,26 @@ def test_a_skipped_job_is_not_listed(client, user_id):
     assert client.get("/api/jobs").get_json()["jobs"] == []
 
 
-def test_an_application_still_waiting_does_not_hide_the_job(client, user_id):
-    """Only a decision retires a job. Something merely prepared is still
-    in flight, and hiding it would lose it."""
+def test_a_prepared_application_also_retires_the_job(client, user_id):
+    """Jobs is "things I have not acted on yet". A prepared application is
+    waiting on a submit in Applications, which is the only tab that can give
+    it one -- so listing it in both duplicates it rather than protecting it."""
     with session() as s:
         _job(client, s, user_id)
         _application(s, user_id, status="prepared")
-    assert len(client.get("/api/jobs").get_json()["jobs"]) == 1
+    assert client.get("/api/jobs").get_json()["jobs"] == []
+
+
+def test_a_job_with_no_application_at_all_is_the_only_kind_listed(client,
+                                                                  user_id):
+    """The rule reduced to one sentence, so it cannot drift back into a set
+    of statuses that someone has to remember to keep in sync."""
+    with session() as s:
+        _job(client, s, user_id, fingerprint="untouched")
+        _job(client, s, user_id, fingerprint="acted-on")
+        _application(s, user_id, fingerprint="acted-on", status="prepared")
+    jobs = client.get("/api/jobs").get_json()["jobs"]
+    assert [j["fingerprint"] for j in jobs] == ["untouched"]
 
 
 def test_applied_jobs_can_still_be_asked_for(client, user_id):
@@ -276,3 +289,100 @@ def test_the_ui_says_what_to_do_rather_than_naming_the_mechanism():
     js = (Path(__file__).resolve().parent.parent / "src" / "jobauto" / "cloud"
           / "static" / "cloud.js").read_text(encoding="utf-8")
     assert "apply on the employer site" in js.lower()
+
+
+# ------------------- applications that need you must reach the dashboard
+# The gap behind all of this: only `prepared` rows were ever synced. An
+# application that hit an employer's own site, or one where the apply button
+# could not be found, vanished completely -- gone from the jobs list, absent
+# from applications, no record anywhere that it had been tried. Those are the
+# ones that need a person, so they are the last that should disappear quietly.
+def _local_db(tmp_path):
+    from jobauto.db import Database
+    from jobauto.models import AppStatus, Job
+
+    db = Database(tmp_path / "t.db")
+    for i, status in enumerate((AppStatus.PREPARED, AppStatus.EXTERNAL,
+                                AppStatus.FAILED, AppStatus.SUBMITTED,
+                                AppStatus.SKIPPED)):
+        job = Job(portal="linkedin", portal_job_id=str(i),
+                  title=f"Role {i}", company=f"Co {i}",
+                  url=f"https://x/{i}")
+        db.upsert_job(job)
+        db.record_application(job, status, error=f"note {status.value}")
+    return db
+
+
+def test_everything_needing_a_person_is_synced(tmp_path):
+    db = _local_db(tmp_path)
+    try:
+        statuses = {r["status"] for r in db.needs_attention()}
+        assert statuses == {"prepared", "external", "failed"}
+    finally:
+        db.close()
+
+
+def test_a_decided_application_is_not_resynced(tmp_path):
+    """Nothing is wanted from you, and re-pushing would fight the dashboard."""
+    db = _local_db(tmp_path)
+    try:
+        statuses = {r["status"] for r in db.needs_attention()}
+        assert "submitted" not in statuses and "skipped" not in statuses
+    finally:
+        db.close()
+
+
+def test_the_review_gate_still_only_sees_filled_forms(tmp_path):
+    """`jobauto review` offers you a submit. There is nothing to submit for an
+    application that was never filled, so that list must stay narrow."""
+    db = _local_db(tmp_path)
+    try:
+        assert {r["status"] for r in db.pending_review()} == {"prepared"}
+    finally:
+        db.close()
+
+
+def test_the_agent_pushes_the_wider_set(tmp_path):
+    """Guards the actual wiring, not just the query that feeds it."""
+    import inspect
+    from jobauto.agent import runner
+
+    source = inspect.getsource(runner.LocalAgent.push_state)
+    assert "needs_attention()" in source
+    assert "pending_review()" not in source
+
+
+def test_a_failed_application_shows_as_pending_in_the_dashboard(client,
+                                                               agent_headers,
+                                                               user_id):
+    with session() as s:
+        _job(client, s, user_id, state="queued")
+
+    client.post("/api/agent/applications", headers=agent_headers, json={
+        "applications": [{
+            "fingerprint": "f1", "portal": "linkedin", "title": "T",
+            "company": "Acme", "url": "https://x/1", "status": "failed",
+            "note": "no apply button matched apply.instant_button"}]})
+
+    apps = client.get("/api/applications").get_json()["applications"]
+    assert len(apps) == 1
+    assert apps[0]["status"] == "failed"
+    assert "no apply button" in apps[0]["note"]
+    # and it is gone from jobs, so it lives in exactly one place
+    assert client.get("/api/jobs").get_json()["jobs"] == []
+
+
+def test_the_card_shows_why_it_stopped():
+    """The note was stored, sent to the browser, and then dropped -- so the
+    one sentence explaining what happened existed only in a log on the PC."""
+    from pathlib import Path
+    js = (Path(__file__).resolve().parent.parent / "src" / "jobauto" / "cloud"
+          / "static" / "cloud.js").read_text(encoding="utf-8")
+    assert "app.note" in js
+
+
+def test_an_unfillable_application_offers_to_let_you_do_it():
+    from pathlib import Path
+    js = (Path(__file__).resolve().parent.parent / "src" / "jobauto" / "cloud"
+          / "static" / "cloud.js").read_text(encoding="utf-8")
+    assert "yourself" in js

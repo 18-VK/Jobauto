@@ -341,10 +341,33 @@ class Database:
         return int(cur.fetchone()["n"])
 
     def pending_review(self) -> list[sqlite3.Row]:
+        """Forms that were filled and are waiting on you to submit."""
         return self._conn.execute(
             """SELECT a.*, s.total FROM applications a
                LEFT JOIN scores s ON s.fingerprint = a.fingerprint
                WHERE a.status = 'prepared' ORDER BY s.total DESC""").fetchall()
+
+    # Statuses that still want something from a human. `prepared` wants a
+    # submit; the other two want you to go and do the application yourself,
+    # because the automation could not.
+    NEEDS_YOU_STATUSES = ("prepared", "external", "failed")
+
+    def needs_attention(self) -> list[sqlite3.Row]:
+        """Everything still waiting on you, whatever stopped it.
+
+        Wider than pending_review on purpose. Only `prepared` rows were ever
+        synced to the dashboard, so an application that hit an employer's own
+        site, or one where the apply button could not be found, simply
+        vanished: gone from the jobs list, absent from applications, no record
+        anywhere that it had been tried. Those are exactly the ones needing a
+        person, so they are the last ones that should disappear quietly.
+        """
+        marks = ",".join("?" for _ in self.NEEDS_YOU_STATUSES)
+        return self._conn.execute(
+            f"""SELECT a.*, s.total FROM applications a
+                LEFT JOIN scores s ON s.fingerprint = a.fingerprint
+                WHERE a.status IN ({marks})
+                ORDER BY s.total DESC""", self.NEEDS_YOU_STATUSES).fetchall()
 
     # ------------------------------------------------------------- runs
     # ---------------------------------------------------- portal cool-off

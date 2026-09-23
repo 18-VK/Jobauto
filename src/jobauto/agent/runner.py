@@ -189,11 +189,11 @@ class LocalAgent:
             "escalated": json.loads(r["escalated"] or "[]"),
             "resume_path": r["resume_path"] or "",
             "note": r["error"] or "",
-        } for r in db.pending_review()]
+        } for r in db.needs_attention()]
         if apps:
             self.cloud.push_applications(apps)
             if not quiet:
-                self.log(f"  pushed {len(apps)} pending applications")
+                self.log(f"  pushed {len(apps)} applications needing you")
 
     # -------------------------------------------------------- heartbeat
     @contextlib.contextmanager

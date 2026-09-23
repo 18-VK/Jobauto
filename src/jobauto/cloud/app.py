@@ -33,13 +33,14 @@ TERMINAL_STATUSES = ("submitted", "skipped")
 # letting a search reset the state puts it back every single run.
 _USER_CHOSEN_STATES = ("queued", "applied", "skipped", "external")
 
-# Application statuses that mean the jobs list is finished with this job.
-# Wider than TERMINAL_STATUSES, and deliberately so: `external` and `failed`
-# are not decisions you made, but there is still nothing left to do about them
-# in the jobs list -- they live in Applications now and need a human follow-up.
-# Leaving them in Jobs shows the same job in two places, one of which cannot
-# act on it.
-_RETIRES_JOB_STATUSES = ("submitted", "skipped", "external", "failed")
+# Any application at all retires the job from the jobs list. Jobs is "things
+# I have not acted on yet"; the moment one has an application -- submitted,
+# skipped, handed off, failed, or merely prepared and waiting on a submit --
+# it belongs to Applications, which is the only tab that can act on it.
+# Showing it in both put the same job in two places and meant the jobs list
+# only ever grew.
+_RETIRES_JOB_STATUSES = ("submitted", "skipped", "external", "failed",
+                         "prepared")
 
 # Retention runs off the agent's poll rather than a scheduler, because free
 # tiers have no cron and a sleeping instance runs no background threads. The

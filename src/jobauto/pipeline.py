@@ -638,11 +638,17 @@ _NEEDS_REVIEW_MARKERS = (
     "could not type an answer into the chatbot",
     "drawer never opened",
     "question drawer never opened",
-    "has no account",
-    "signed out -- the page has no apply button because it has no account",
-    "redirects to the employer site -- apply by hand",
-    "employer ats application -- apply by hand",
 )
+
+# Deliberately NOT in the list above, though all four once were:
+#
+#   - the two "apply by hand" redirects are EXTERNAL. Nothing was filled, so
+#     calling them prepared offers a submit button for a form that does not
+#     exist. They only landed here to get them showing in the dashboard, and
+#     Database.needs_attention now syncs external and failed rows anyway.
+#   - the two signed-out ones are FAILED. `prepared` is terminal locally, so
+#     an expired session quietly retired every job it touched, for good.
+#     `failed` is retried a day later, which is what a session expiry wants.
 
 
 def _classify(note: str) -> AppStatus:

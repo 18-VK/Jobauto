@@ -225,6 +225,13 @@ function appCard(app) {
     }
   }
 
+  // Why it stopped. Held in the database and sent to the browser all along,
+  // and then never displayed -- so the one sentence explaining what happened
+  // to this application only ever existed in a log on the PC.
+  if (!isDone && app.note) {
+    card.append(el('p', 'note', app.note));
+  }
+
   const foot = el('div', 'card-foot');
   if (isDone) {
     foot.append(el('span', 'muted',
@@ -252,9 +259,11 @@ function appCard(app) {
       failed: 'the form could not be completed automatically',
     }[app.status] || 'filled on your PC, not sent'));
 
-    const open = el('a', 'btn btn-sm' + (app.status === 'external' ? ' btn-primary' : ''),
+    const needsYou = app.status === 'external' || app.status === 'failed';
+    const open = el('a', 'btn btn-sm' + (needsYou ? ' btn-primary' : ''),
                     app.status === 'external' ? 'Apply on the employer site'
-                                              : 'Visit job status');
+                    : app.status === 'failed' ? `Apply on ${app.portal} yourself`
+                    : 'Visit job status');
     open.href = app.url; open.target = '_blank'; open.rel = 'noopener';
     foot.append(open);
 

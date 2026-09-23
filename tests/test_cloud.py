@@ -298,7 +298,13 @@ def test_preparing_an_application_clears_the_queue_flag(client):
          "answered": {"Notice period?": "60 days"},
          "escalated": ["Why this role?"]}]})
 
-    assert client.get("/api/jobs").get_json()["jobs"][0]["state"] == "done"
+    # include_applied, because a job with an application no longer shows in
+    # the default jobs list at all -- it belongs to Applications now. The
+    # queue flag still has to be cleared underneath.
+    listed = client.get("/api/jobs?include_applied=1").get_json()["jobs"]
+    assert listed[0]["state"] == "done"
+    assert client.get("/api/jobs").get_json()["jobs"] == []
+
     apps = client.get("/api/applications").get_json()["applications"]
     assert apps[0]["status"] == "prepared"
     assert apps[0]["escalated"] == ["Why this role?"]

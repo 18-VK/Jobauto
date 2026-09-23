@@ -489,3 +489,15 @@ main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
 .task-row:hover { border-color: var(--accent); }
 
 .task-row .state.expired { background: var(--warn-soft); color: var(--warn); }
+
+/* Why an application stopped. Muted, because it is an explanation rather
+   than an alarm -- but present, because without it the card says something
+   went wrong and nothing about what. */
+.card .note {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}

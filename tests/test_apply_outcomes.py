@@ -75,8 +75,15 @@ def test_an_incomplete_fill_is_not_filed_as_prepared():
 
 
 def test_an_employer_redirect_is_pending_for_manual_follow_up():
+    """It needs you to go and apply, so it must reach the dashboard -- but as
+    EXTERNAL, not PREPARED. Prepared means a form was filled and is waiting on
+    a submit, and it offers you a submit button for a form that was never
+    filled. Database.needs_attention is what gets it in front of you now."""
+    from jobauto.db import Database
+
     note = "redirects to the employer site -- apply by hand"
-    assert _classify(note) == AppStatus.PREPARED
+    assert _classify(note) == AppStatus.EXTERNAL
+    assert AppStatus.EXTERNAL.value in Database.NEEDS_YOU_STATUSES
 
 
 def test_a_note_that_only_needs_a_look_stays_prepared():
@@ -92,9 +99,17 @@ def test_a_chatbot_waiting_on_blank_question_is_prepared():
 
 
 def test_a_missing_account_is_marked_pending_for_action():
+    """Still surfaced for action, but as FAILED. `prepared` is terminal in the
+    local database, so classifying a session expiry that way quietly retired
+    every job it touched, for good -- and an expired session touches all of
+    them. `failed` is retried a day later, which is what this wants."""
+    from jobauto.db import Database, TERMINAL_STATUSES
+
     note = ("signed out -- the page has no apply button because it has no "
             "account. Run: python -m jobauto login --portal linkedin")
-    assert _classify(note) == AppStatus.PREPARED
+    assert _classify(note) == AppStatus.FAILED
+    assert AppStatus.FAILED.value in Database.NEEDS_YOU_STATUSES
+    assert AppStatus.FAILED.value not in TERMINAL_STATUSES
 
 
 def test_a_question_drawer_that_never_opens_is_pending_for_review():
