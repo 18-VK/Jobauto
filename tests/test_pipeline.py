@@ -6,6 +6,8 @@ shortlist -> cap accounting -- which is the bit unit tests cannot cover.
 from __future__ import annotations
 
 import contextlib
+import json
+import os
 import subprocess
 from datetime import date, datetime
 from typing import Any, Iterator
@@ -128,29 +130,66 @@ def run_discover(config, db, monkeypatch) -> dict[str, int]:
     return Pipeline(config, db, log=lambda *_: None).discover()
 
 
-def test_browser_cleanup_kills_stale_chromium_for_same_profile(monkeypatch, tmp_path):
+def _cleanup_run(profile_dir, holding):
+    """Run the cleanup against a faked process list. Returns every command
+    it issued, so a test can see the kill as well as the query."""
+    import pytest
     from jobauto.browser import BrowserSession
+    if os.name != "nt":
+        pytest.skip("the cleanup is a Windows-only path")
 
-    profile_dir = tmp_path / "browser" / "naukri"
-    profile_dir.mkdir(parents=True)
-    captured = {}
+    calls: list[list[str]] = []
 
     def fake_run(cmd, capture_output=True, text=True, shell=False, check=False):
-        captured["cmd"] = cmd
-        if "Get-CimInstance" in str(cmd):
-            payload = (
-                '[{"ProcessId":9999,"Name":"chrome.exe","CommandLine":'
-                f'"--user-data-dir={profile_dir} --remote-debugging-port=9222"}}]'
-            )
-            return subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
+        calls.append(list(cmd))
+        if "Get-CimInstance" in " ".join(cmd):
+            # json.dumps, never an f-string. A raw Windows path pasted into
+            # JSON carries backslash sequences that are either invalid (the
+            # one before Users) or valid and corrupting (the ones before
+            # browser and naukri), so the old fixture never parsed -- the
+            # cleanup correctly found nothing to kill, and the test could
+            # only ever pass on a machine that is not Windows.
+            rows = [{"ProcessId": 9999, "Name": "chrome.exe",
+                     "CommandLine": f"chrome.exe --user-data-dir={holding} "
+                                    f"--remote-debugging-port=9222"}]
+            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(rows),
+                                               stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("jobauto.browser.subprocess.run", fake_run)
+    import jobauto.browser as browser_mod
+    original = browser_mod.subprocess.run
+    browser_mod.subprocess.run = fake_run
+    try:
+        BrowserSession._cleanup_stale_browser_session(profile_dir)
+    finally:
+        browser_mod.subprocess.run = original
+    return calls
 
-    BrowserSession._cleanup_stale_browser_session(profile_dir)
 
-    assert captured["cmd"][0] == "powershell"
-    assert "Stop-Process" in " ".join(captured["cmd"])
+def test_browser_cleanup_kills_stale_chromium_for_same_profile(tmp_path):
+    """A leftover Chrome holding the profile makes the next launch fail with
+    "Opening in existing browser session"."""
+    profile_dir = tmp_path / "browser" / "naukri"
+    profile_dir.mkdir(parents=True)
+
+    calls = _cleanup_run(profile_dir, holding=profile_dir)
+
+    assert calls[0][0] == "powershell"
+    kills = [" ".join(c) for c in calls if "Stop-Process" in " ".join(c)]
+    assert kills and "-Id 9999" in kills[0]
+
+
+def test_browser_cleanup_leaves_other_profiles_alone(tmp_path):
+    """The whole point of per-portal profiles: a reset on one portal must not
+    cascade to the others. Killing every Chrome would do exactly that -- and
+    take the user's own browser with it."""
+    ours = tmp_path / "browser" / "naukri"
+    theirs = tmp_path / "browser" / "linkedin"
+    ours.mkdir(parents=True); theirs.mkdir(parents=True)
+
+    calls = _cleanup_run(ours, holding=theirs)
+
+    assert not any("Stop-Process" in " ".join(c) for c in calls)
 
 
 def test_shortlist_prefers_newest_posted_jobs_first(db):
@@ -171,46 +210,60 @@ def test_shortlist_prefers_newest_posted_jobs_first(db):
     assert rows[1]["fingerprint"] == older.fingerprint
 
 
-def test_ensure_logged_in_allows_signed_in_profile_on_stale_selector():
-    """A stale auth selector must not falsely log the user out if the page is a valid profile page."""
-    from jobauto.config import PortalConfig
+class _Nothing:
+    """A locator that never finds anything -- every selector is stale."""
+    def is_visible(self, timeout=0):
+        raise Exception("not visible")
+
+    @property
+    def first(self):
+        return self
+
+
+class _StalePage:
+    def __init__(self, url):
+        self.url = url
+
+    def title(self):
+        return ""
+
+    def locator(self, selector):
+        return _Nothing()
+
+
+def _naukri_adapter(url):
+    """Concrete, because PortalAdapter is abstract and the old test tried to
+    instantiate it directly -- so it raised before its body ever ran."""
+    from jobauto.config import Config, PortalConfig
     from jobauto.portals.base import PortalAdapter
 
-    class _FakeVisible:
-        def __init__(self, selected: bool):
-            self.selected = selected
-
-        def is_visible(self, timeout=0):
-            if self.selected:
-                return True
-            raise Exception("not visible")
-
-    class _FakeLocator:
-        def __init__(self, selected: bool):
-            self._selected = selected
-
-        def first(self):
-            return _FakeVisible(self._selected)
-
-    class _FakePage:
-        url = "https://www.naukri.com/mnjuser/profile"
-
-        def locator(self, selector):
-            return _FakeLocator(False)
+    class _Concrete(PortalAdapter):
+        def search(self, role):
+            return iter(())
 
     portal = PortalConfig(
-        id="naukri",
-        name="Naukri",
-        enabled=True,
+        id="naukri", name="Naukri", enabled=True,
         base_url="https://www.naukri.com",
         adapter="jobauto.portals.naukri:NaukriAdapter",
-        auth={"logged_in_selector": ".totally-stale-selector"},
-    )
-    adapter = PortalAdapter.__new__(PortalAdapter)
-    adapter.portal = portal
-    adapter.page = _FakePage()
+        auth={"logged_in_selector": ".totally-stale-selector"})
+    config = Config(profile={}, preferences={"application": {}}, portals={})
+    return _Concrete(portal, config, _StalePage(url))
 
-    adapter.ensure_logged_in()
+
+def test_ensure_logged_in_allows_signed_in_profile_on_stale_selector():
+    """A stale auth selector must not log you out when the browser is plainly
+    on a profile page. Portals redesign the marker without changing the
+    signed-in state, and a false "not signed in" here stops every portal."""
+    _naukri_adapter("https://www.naukri.com/mnjuser/profile").ensure_logged_in()
+
+
+def test_ensure_logged_in_still_refuses_a_login_page():
+    """The leniency above must not reach a page that is actually the login
+    form -- that is the case the selector exists for."""
+    from jobauto.portals.base import LoginRequired
+    import pytest
+    with pytest.raises(LoginRequired):
+        _naukri_adapter("https://www.naukri.com/nlogin/login").ensure_logged_in()
 
 
 def test_discover_scores_and_stores(config, db, monkeypatch):

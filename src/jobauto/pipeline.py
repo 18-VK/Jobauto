@@ -38,14 +38,24 @@ APPLY_BUDGET_SECONDS = 25 * 60
 
 
 def within_active_hours(config: Config) -> tuple[bool, str]:
-    """Applying at 3am is a strong automation tell."""
+    """Applying at 3am is a strong automation tell.
+
+    Equal hours are an empty window, and an empty window applies to nothing.
+    "Any hour" already has a spelling -- leave active_hours out -- and a
+    setting that reads as "never" quietly meaning "always" is the wrong way
+    round for a tool whose whole posture is not surprising you.
+    """
     hours = config.application.get("pacing", {}).get("active_hours")
     if not hours:
         return True, ""
     lo, hi = int(hours[0]), int(hours[1])
     now = datetime.now().hour
     if lo == hi:
-        return True, ""
+        # Same prefix as the out-of-window case below: to the scheduler and
+        # the task log these are one reason with two causes.
+        return False, (f"outside active hours -- [{lo}, {hi}] is an empty "
+                       f"window, so nothing is ever applied. Widen it, or "
+                       f"remove active_hours to allow any hour")
     if lo < hi:
         ok = lo <= now < hi
     else:

@@ -131,7 +131,7 @@ application:
     between_actions: [1.5, 4.0]
     between_applications: [20, 75]
     # Don't run outside these hours (24h, local). Applying at 3am looks robotic.
-    active_hours: [8, 22]
+    active_hours: [8, 22]   # equal hours = empty window, never applies; omit to allow any hour
 
   # Re-apply guard
   cooldown_days:
