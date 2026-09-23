@@ -565,3 +565,95 @@ def test_a_boolean_does_not_become_a_time():
     """`time: yes` is True in YAML 1.1, and True is an int in Python -- so
     the integer branch would read it as 00:01."""
     assert schedule._parse_time(True) == __import__("datetime").time(9, 0)
+
+
+# ------------------------------------------ why a chain stops, and when
+# The PC used to come back with `{}` when it refused a batch -- outside active
+# hours, nothing in its shortlist -- and to the scheduler that looked the same
+# as a batch that found nothing. It answered both by queueing the next batch,
+# so a run refused at 20:01 marched through every remaining batch, each
+# refused in turn, while the task list showed twenty apply tasks that did
+# nothing.
+def _chain_to_first_batch(client, tok):
+    discover = client.get("/api/agent/work", headers=H(tok)).get_json()["task"]
+    client.post(f"/api/agent/tasks/{discover['id']}/result", headers=H(tok),
+                json={"status": "done", "result": {"found": 40}})
+    return client.get("/api/agent/work", headers=H(tok)).get_json()["task"]
+
+
+def test_a_stated_reason_ends_the_chain(client):
+    enable_schedule(client, max_batches=20)
+    tok = token(client)
+    batch1 = _chain_to_first_batch(client, tok)
+
+    client.post(f"/api/agent/tasks/{batch1['id']}/result", headers=H(tok),
+                json={"status": "done", "result": {
+                    "prepared": 0, "failed": 0,
+                    "reason": "outside active hours 09:00-20:00 (now 20:00)"}})
+
+    assert client.get("/api/agent/work", headers=H(tok)).get_json()["task"] is None
+
+
+def test_the_reason_is_written_on_the_task_that_stopped(client):
+    """A chain that just ends looks identical to one that broke."""
+    enable_schedule(client)
+    tok = token(client)
+    batch1 = _chain_to_first_batch(client, tok)
+    client.post(f"/api/agent/tasks/{batch1['id']}/result", headers=H(tok),
+                json={"status": "done",
+                      "result": {"reason": "nothing to apply to"}})
+
+    logged = [t for t in tasks(client) if t["id"] == batch1["id"]][0]
+    assert "scheduled run ended here: nothing to apply to" in logged["log"]
+
+
+def test_a_batch_that_tried_and_failed_everything_keeps_the_chain_going(client):
+    """Five failures still prove the shortlist has rows in it. Stopping here
+    would end a run because one portal's selector was stale."""
+    enable_schedule(client)
+    tok = token(client)
+    batch1 = _chain_to_first_batch(client, tok)
+    client.post(f"/api/agent/tasks/{batch1['id']}/result", headers=H(tok),
+                json={"status": "done",
+                      "result": {"prepared": 0, "failed": 5}})
+
+    nxt = client.get("/api/agent/work", headers=H(tok)).get_json()["task"]
+    assert nxt is not None and nxt["payload"]["batch"] == 2
+
+
+def test_backlog_ignores_jobs_that_already_have_an_application(client):
+    """A failed application never changed the job's state, so five jobs that
+    had just failed still looked like five jobs waiting -- and the chain kept
+    queueing batches for a backlog the PC's shortlist said was empty."""
+    enable_schedule(client)
+    tok = token(client)
+    batch1 = _chain_to_first_batch(client, tok)
+
+    with clouddb.session() as s:
+        from sqlalchemy import select
+        from jobauto.cloud.db import Application, CloudJob, User
+        user = s.scalar(select(User))
+        s.add(CloudJob(user_id=user.id, fingerprint="tried-already",
+                       portal="linkedin", title="Job", company="Acme",
+                       url="https://x/1", state="new", score=90.0))
+        s.add(Application(user_id=user.id, fingerprint="tried-already",
+                          portal="linkedin", title="Job", company="Acme",
+                          url="https://x/1", status="failed"))
+        s.commit()
+
+    client.post(f"/api/agent/tasks/{batch1['id']}/result", headers=H(tok),
+                json={"status": "done", "result": {"prepared": 0}})
+
+    assert client.get("/api/agent/work", headers=H(tok)).get_json()["task"] is None
+
+
+def test_a_failed_batch_ends_the_chain_and_says_so(client):
+    enable_schedule(client)
+    tok = token(client)
+    batch1 = _chain_to_first_batch(client, tok)
+    client.post(f"/api/agent/tasks/{batch1['id']}/result", headers=H(tok),
+                json={"status": "failed", "result": {"error": "browser blocked"}})
+
+    assert client.get("/api/agent/work", headers=H(tok)).get_json()["task"] is None
+    logged = [t for t in tasks(client) if t["id"] == batch1["id"]][0]
+    assert "scheduled run ended here" in logged["log"]

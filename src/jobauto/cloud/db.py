@@ -24,6 +24,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Application statuses that mean a job has been acted on. One rule, used in
+# two places that must agree: the jobs list hides these (they belong to
+# Applications now), and the scheduled apply chain does not count them as
+# backlog. When the two disagreed, the chain kept queueing batches for a
+# backlog that the jobs list -- and the PC's own shortlist -- said was empty.
+RETIRES_JOB_STATUSES = ("submitted", "skipped", "external", "failed",
+                        "prepared")
+
+
 class Base(DeclarativeBase):
     pass
 

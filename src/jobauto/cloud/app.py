@@ -20,8 +20,8 @@ from flask import (Flask, flash, g, jsonify, redirect, render_template,
 from sqlalchemy import delete, desc, func, or_ as sa_or, select
 
 from . import auth, schedule
-from .db import (Agent, Application, CloudJob, Task, User, init_engine,
-                 session, utcnow)
+from .db import (RETIRES_JOB_STATUSES, Agent, Application, CloudJob, Task,
+                 User, init_engine, session, utcnow)
 
 # Outcomes the user chose in the browser. Nothing the agent pushes may
 # overwrite one, and nothing in these states counts as pending.
@@ -37,10 +37,9 @@ _USER_CHOSEN_STATES = ("queued", "applied", "skipped", "external")
 # I have not acted on yet"; the moment one has an application -- submitted,
 # skipped, handed off, failed, or merely prepared and waiting on a submit --
 # it belongs to Applications, which is the only tab that can act on it.
-# Showing it in both put the same job in two places and meant the jobs list
-# only ever grew.
-_RETIRES_JOB_STATUSES = ("submitted", "skipped", "external", "failed",
-                         "prepared")
+# Defined beside the models because the scheduler needs the same rule for
+# counting backlog, and it must not be able to drift from this one.
+_RETIRES_JOB_STATUSES = RETIRES_JOB_STATUSES
 
 # Retention runs off the agent's poll rather than a scheduler, because free
 # tiers have no cron and a sleeping instance runs no background threads. The

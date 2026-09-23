@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import subprocess
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Iterator
 
 import pytest
@@ -839,3 +839,110 @@ def test_channel_can_be_forced_by_environment(monkeypatch):
     from jobauto.browser import BrowserSession
     src = inspect.getsource(BrowserSession._launch_with_fallback)
     assert "JOBAUTO_BROWSER_CHANNEL" in src
+
+
+# ------------------------------------------ what a batch tells the scheduler
+# The scheduler chains batches from what apply() returns. `{}` for a refused
+# batch and `{}` for an empty one were indistinguishable, and it answered both
+# by queueing the next batch -- so a run refused for active hours marched
+# through every remaining batch, each refused in turn.
+def _hour_window_excluding_now():
+    h = datetime.now().hour
+    return [(h + 2) % 24, (h + 3) % 24]
+
+
+def test_a_batch_refused_for_active_hours_says_so(config, db, monkeypatch):
+    run_discover(config, db, monkeypatch)
+    config.preferences["application"]["pacing"]["active_hours"] = \
+        _hour_window_excluding_now()
+    _fake_portal(monkeypatch, _FormAdapter)
+
+    result = Pipeline(config, db, log=lambda *_: None).apply(
+        limit=5, interactive=False)
+
+    assert result, "must not come back empty -- the scheduler reads it"
+    assert "outside active hours" in result["reason"]
+    assert result["prepared"] == 0 and result["failed"] == 0
+
+
+def test_an_empty_shortlist_says_so(config, db, monkeypatch):
+    """No discover has run, so there is nothing to apply to. That is the
+    truth about backlog and it must reach the scheduler as a reason."""
+    _fake_portal(monkeypatch, _FormAdapter)
+    result = Pipeline(config, db, log=lambda *_: None).apply(
+        limit=5, interactive=False)
+    assert result["reason"] == "nothing to apply to"
+
+
+def test_a_batch_that_ran_carries_no_reason(config, db, monkeypatch):
+    run_discover(config, db, monkeypatch)
+    _fake_portal(monkeypatch, _FormAdapter)
+    result = Pipeline(config, db, log=lambda *_: None).apply(
+        limit=2, interactive=False)
+    assert result["prepared"] == 2
+    assert "reason" not in result
+
+
+def test_the_cli_summary_reads_counts_not_the_reason():
+    from jobauto.review import summarise
+    assert summarise({"prepared": 2, "failed": 1, "reason": ""}) == \
+        "2 prepared, 1 failed"
+    assert summarise({"prepared": 0, "reason": "nothing to apply to"}) == \
+        "nothing to apply to"
+
+
+# ---------------------------------------------- a batch fills to its limit
+class _PerPortalForms(FakeAdapter):
+    """Distinct jobs per portal. The canned jobs share fingerprints across
+    portals, so without this dedupe folds two portals' results into one
+    portal's rows and the second portal never gets a turn.
+
+    Not RAW_JOBS: its first two rows share a fingerprint once the seniority
+    word is stripped, and its third is an intern posting the exclude filter
+    drops. Three rows that pass every hard filter, each a distinct job."""
+
+    ROWS = [
+        ("Backend Developer", "Acme", "Noida", "12-18 Lacs PA", "3-6 years"),
+        ("Backend Developer", "Stark", "Remote", "16-24 Lacs PA", "3-6 years"),
+        ("Backend Engineer", "Wayne", "Noida", "14-20 Lacs PA", "3-6 years"),
+    ]
+
+    def search(self, role):
+        for title, company, location, salary, exp in self.ROWS:
+            job = self.build_job(
+                portal_job_id=f"{self.portal.id}-{company}-{title}",
+                title=title, company=f"{company} {self.portal.id}",
+                url=f"https://{self.portal.id}/{company}/{title}".replace(" ", "-"),
+                location=location, salary=salary, experience=exp,
+                posted="2 days ago",
+                description="C# .NET Core SQL Server REST API")
+            job.posted_date = date.today()
+            yield job
+
+    def open_application(self, job):
+        return True, ""
+
+    def read_questions(self):
+        return []
+
+
+def test_a_batch_spanning_two_portals_fills_to_the_limit(config, db, monkeypatch):
+    """`done += budget` charged the whole batch to the first portal even when
+    it only had three rows, so the second portal was handed a budget of zero
+    and a batch of five came out as three."""
+    from jobauto.config import PortalConfig
+    config.portals["fake2"] = PortalConfig(
+        id="fake2", name="Second Portal", enabled=True, base_url="https://fake2",
+        adapter="tests.test_pipeline:FakeAdapter",
+        auth={}, search={"pagination": {"max_pages": 1}})
+    config.preferences["application"]["daily_caps"] = {"fake": 10, "fake2": 10}
+
+    _fake_portal(monkeypatch, _PerPortalForms)
+    pipe = Pipeline(config, db, log=lambda *_: None)
+    pipe.discover(parallel=False)
+    assert len(db.shortlist(min_score=0)) == 6, "three distinct jobs per portal"
+
+    result = pipe.apply(limit=5, min_score=0, interactive=False)
+
+    assert result["prepared"] == 5
+    assert len(db.pending_review()) == 5

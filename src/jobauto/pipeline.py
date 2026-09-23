@@ -304,10 +304,18 @@ class Pipeline:
         to the exact entries that were requested, instead of reopening the portal
         for unrelated shortlisted jobs in the same cycle.
         """
+        # Every early return below carries a reason rather than coming back
+        # empty. To the scheduler an empty dict and a batch that found
+        # nothing look identical, and it responded to both by queueing the
+        # next batch -- so a run refused for active hours marched through
+        # all twenty batches, each refused in turn.
+        results = {"prepared": 0, "submitted": 0, "skipped": 0,
+                   "external": 0, "failed": 0}
+
         ok, why = within_active_hours(self.config)
         if not ok and not dry_run:
             self.log(f"  Refusing to apply: {why}")
-            return {}
+            return {**results, "reason": why}
 
         threshold = (min_score if min_score is not None
                      else float(self.config.thresholds.get("shortlist", 60)))
@@ -319,12 +327,10 @@ class Pipeline:
         if not rows:
             if not queued:
                 self.log(f"  Nothing to apply to. {self._why_nothing(threshold)}")
-            return {}
+            return {**results, "reason": "nothing to apply to"}
 
         gate = ReviewGate(self.config, auto=self.config.auto_submit,
                           interactive=interactive)
-        results = {"prepared": 0, "submitted": 0, "skipped": 0,
-                   "external": 0, "failed": 0}
         by_portal: dict[str, list[Any]] = {}
         for row in rows:
             by_portal.setdefault(row["portal"], []).append(row)
@@ -358,10 +364,13 @@ class Pipeline:
             try:
                 with session(portal, self.config, headless=headless) as page:
                     adapter = registry.build(portal, self.config, page)
+                    batch = portal_rows[:budget]
                     stop = self._apply_on_portal(
-                        adapter, portal_rows[:budget], gate, results,
-                        queued=queued)
-                    done += budget
+                        adapter, batch, gate, results, queued=queued)
+                    # What was tried, not what was allowed. Charging the
+                    # whole budget to a portal that had two rows left the
+                    # rest of the batch to nobody.
+                    done += len(batch)
                     if stop:
                         return results
             except RuntimeError as exc:

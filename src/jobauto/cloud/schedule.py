@@ -25,7 +25,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from sqlalchemy import func, select
 
-from .db import CloudJob, Task, User, utcnow
+from .db import (RETIRES_JOB_STATUSES, Application, CloudJob, Task, User,
+                 utcnow)
 
 log = logging.getLogger("jobauto.schedule")
 
@@ -194,10 +195,11 @@ def next_step(s, user: User, finished: Task) -> Task | None:
     Only ever called with a task that has reported back, so a stalled agent
     cannot cause batches to accumulate.
 
-    A run should not stop simply because the last batch produced zero prepared
-    applications while the dashboard still has discovered jobs waiting. The
-    dashboard is the live backlog: if it still contains new or queued jobs,
-    keep the apply chain going until the daily cap is reached.
+    When to stop, in order: the PC gave a reason (outside active hours,
+    nothing in its shortlist, caps reached) -- that is the truth and asking
+    again will not change it; the batch attempted nothing and the dashboard
+    holds no job nobody has acted on. A batch that tried jobs and had every
+    one fail still proves there are rows to try, so the chain continues.
     """
     try:
         payload = json.loads(finished.payload_json or "{}")
@@ -222,20 +224,35 @@ def next_step(s, user: User, finished: Task) -> Task | None:
         if batch > max_batches:
             return None
 
+        if finished.status != "done":
+            _end_chain(s, finished, "the previous batch failed")
+            return None
+
         try:
             result = json.loads(finished.result_json or "{}")
         except Exception:
             result = {}
-        produced = sum(int(result.get(k, 0) or 0)
-                       for k in ("prepared", "submitted", "external"))
 
-        dashboard_jobs = s.scalar(select(func.count(CloudJob.id)).where(
-            CloudJob.user_id == user.id,
-            CloudJob.dropped == False,
-            CloudJob.state.in_(("new", "queued")),
-        )) or 0
+        # The PC says plainly when a batch could not run -- outside active
+        # hours, nothing left in its shortlist, every cap reached. That is
+        # the truth about backlog, and it is not going to change by asking
+        # again in five minutes. Before this, a refused batch reported the
+        # same zeros as an empty one, and the chain marched through every
+        # remaining batch with each refused in turn.
+        reason = str(result.get("reason") or "").strip()
+        if reason:
+            _end_chain(s, finished, reason)
+            return None
 
-        if finished.status != "done" or (produced == 0 and dashboard_jobs == 0):
+        # Attempted, not produced. A batch that tried five jobs and had every
+        # one fail or hand off still proves the shortlist has rows in it, so
+        # the next batch is worth running. Only a batch that tried nothing
+        # says the local shortlist is empty.
+        attempted = sum(int(result.get(k, 0) or 0) for k in
+                        ("prepared", "submitted", "external", "failed",
+                         "skipped"))
+        if attempted == 0 and _backlog(s, user.id) == 0:
+            _end_chain(s, finished, "nothing left to apply to")
             return None
 
     task = Task(user_id=user.id, kind="apply", payload_json=json.dumps(
@@ -248,6 +265,36 @@ def next_step(s, user: User, finished: Task) -> Task | None:
     log.info("scheduled apply batch %s queued for user %s in %s", batch, user.id,
              interval or "immediately")
     return task
+
+
+def _backlog(s, user_id: int) -> int:
+    """Jobs the dashboard holds that nobody has acted on.
+
+    The same rule the jobs list uses to decide what to show, on purpose. It
+    used to count anything in state 'new', but a failed application never
+    changed the job's state -- so five jobs that had just failed still looked
+    like five jobs waiting, and the chain kept queueing batches for them.
+    """
+    acted_on = select(Application.fingerprint).where(
+        Application.user_id == user_id,
+        Application.status.in_(RETIRES_JOB_STATUSES))
+    return s.scalar(select(func.count(CloudJob.id)).where(
+        CloudJob.user_id == user_id,
+        CloudJob.dropped == False,           # noqa: E712
+        CloudJob.fingerprint.notin_(acted_on))) or 0
+
+
+def _end_chain(s, finished: Task, why: str) -> None:
+    """Say why the run stopped, on the task that stopped it.
+
+    A chain that just ends looks identical to one that broke. Writing the
+    reason onto the last task means the dashboard's task list answers the
+    question instead of the person having to ask.
+    """
+    finished.log = ((finished.log or "").rstrip()
+                    + f"\n\nscheduled run ended here: {why}").strip()
+    s.commit()
+    log.info("scheduled run for user %s ended: %s", finished.user_id, why)
 
 
 def maybe_start(s, user_id: int) -> Task | None:

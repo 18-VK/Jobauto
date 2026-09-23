@@ -105,6 +105,11 @@ class ReviewGate:
             print("  Pick one of s / k / o / q.")
 
 
-def summarise(results: dict[str, int]) -> str:
-    parts = [f"{v} {k}" for k, v in results.items() if v]
-    return ", ".join(parts) if parts else "nothing to do"
+def summarise(results: dict[str, Any]) -> str:
+    """Counts only. `reason` rides along in the same dict for the scheduler,
+    and "outside active hours reason" is not a count of anything."""
+    parts = [f"{v} {k}" for k, v in results.items()
+             if isinstance(v, int) and not isinstance(v, bool) and v]
+    if parts:
+        return ", ".join(parts)
+    return str(results.get("reason") or "nothing to do")
