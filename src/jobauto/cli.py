@@ -247,6 +247,83 @@ def cmd_discover(args: argparse.Namespace) -> int:
         db.close()
 
 
+def cmd_dump(args: argparse.Namespace) -> int:
+    """Save what a portal's results page actually looks like, signed in.
+
+    Every portal here draws its results in JavaScript, so the only way to
+    write a selector that matches is to look at the rendered page from the
+    browser that is logged in -- which is this PC, not wherever the config was
+    written. This opens the search page in the persistent profile, waits for
+    it to draw, and saves the HTML and a screenshot under data/debug/. It
+    applies to nothing and changes nothing on the portal.
+    """
+    from .browser import session
+    from .config import data_dir
+    from .portals import registry
+
+    cfg = _load()
+    targets = ([cfg.portals[p] for p in args.portal if p in cfg.portals]
+               if args.portal else cfg.enabled_portals())
+    if not targets:
+        print(f"  No matching portal. Available: {', '.join(sorted(cfg.portals))}")
+        return 1
+
+    roles = cfg.search.get("roles") or [{"title": "developer"}]
+    locations = (cfg.search.get("locations", {}).get("preferred") or [""])
+    out_dir = data_dir() / "debug"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for portal in targets:
+        print()
+        print(f"  {portal.name}")
+        try:
+            with session(portal, cfg, headless=args.headless) as page:
+                adapter = registry.build(portal, cfg, page)
+                url = adapter.build_search_url(roles[0], locations[0])
+                print(f"    opening {url}")
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                if hasattr(adapter, "note_landing"):
+                    adapter.note_landing()
+
+                # The same scrape the real run does, so the diagnostic below
+                # is the one discover would have printed -- not a guess.
+                found = []
+                try:
+                    found = list(adapter._scrape_page())
+                except Exception as exc:
+                    print(f"    scrape raised {type(exc).__name__}: {exc}")
+
+                html_path = out_dir / f"{portal.id}.html"
+                png_path = out_dir / f"{portal.id}.png"
+                html_path.write_text(page.content(), encoding="utf-8")
+                try:
+                    page.screenshot(path=str(png_path), full_page=True)
+                except Exception:
+                    png_path = None
+
+                landed = getattr(adapter, "landed_url", "") or page.url
+                title = getattr(adapter, "landed_title", "") or ""
+                print(f"    landed  {landed}")
+                if title:
+                    print(f"    title   {title}")
+                print(f"    cards   {len(found)} matched search.result_card")
+                if not found and hasattr(adapter, "why_no_results"):
+                    print(f"    because {adapter.why_no_results()}")
+                print(f"    saved   {html_path}")
+                if png_path:
+                    print(f"    saved   {png_path}")
+        except Exception as exc:
+            print(f"    could not open it: {type(exc).__name__}: {exc}")
+
+    print()
+    print("  Send the .html (and .png) for the portal that found nothing, and")
+    print("  the selectors in config/portals/<portal>.yaml can be written")
+    print("  against the real page. The HTML is your own signed-in view;")
+    print("  it lives under data/, which is not committed.")
+    print()
+    return 0
+
+
 def cmd_shortlist(args: argparse.Namespace) -> int:
     cfg = _load()
     db = Database()
@@ -577,6 +654,12 @@ def build_parser() -> argparse.ArgumentParser:
     portal_arg(sp)
     headless_arg(sp)
     sp.set_defaults(func=cmd_discover)
+
+    sp = sub.add_parser("dump", help="save a portal's real results page "
+                                     "for fixing selectors")
+    portal_arg(sp)
+    headless_arg(sp)
+    sp.set_defaults(func=cmd_dump)
 
     sp = sub.add_parser("shortlist", help="ranked list of scored jobs")
     sp.add_argument("--limit", type=int, default=25)

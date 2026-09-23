@@ -14,6 +14,12 @@ from ..models import Job
 from .base import PortalAdapter
 
 
+# How long to give a results page to draw its first card. Long, because it
+# only ever costs time on a page with no cards at all, and short by the
+# standard of the pacing that follows every page anyway.
+CARD_WAIT_MS = 15000
+
+
 def slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
 
@@ -262,6 +268,16 @@ class ConfigDrivenAdapter(PortalAdapter):
 
         try:
             cards = self.page.locator(card_sel)
+            # Wait for the cards, not only the container. Every portal here
+            # renders its results in JavaScript after the document loads, so
+            # a container that matches at once -- `main` does, on any page --
+            # hands control back before a single card exists, and count()
+            # reports zero for a page that is about to be full of them. A
+            # miss here is cheap: the count below says zero either way.
+            try:
+                cards.first.wait_for(state="attached", timeout=CARD_WAIT_MS)
+            except Exception:
+                pass
             count = cards.count()
             self.last_card_count = count
         except Exception as exc:

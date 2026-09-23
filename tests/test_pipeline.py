@@ -999,3 +999,81 @@ def test_a_batch_spanning_two_portals_fills_to_the_limit(config, db, monkeypatch
 
     assert result["prepared"] == 5
     assert len(db.pending_review()) == 5
+
+
+# ------------------------------------------- wait for the cards themselves
+class _CardsThatArrive:
+    """A card locator on a page still drawing: attached only after a wait."""
+    def __init__(self, events):
+        self.events = events
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, state="attached", timeout=0):
+        self.events.append(f"wait:{state}:{timeout}")
+
+    def count(self):
+        self.events.append("count")
+        return 0
+
+
+class _InstantContainer:
+    def __init__(self, events):
+        self.events = events
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, timeout=0):
+        self.events.append("container")
+
+
+class _RenderingPage:
+    url = "https://x/search"
+
+    def __init__(self, events):
+        self.events = events
+
+    def locator(self, sel):
+        return (_InstantContainer(self.events) if sel == "main"
+                else _CardsThatArrive(self.events))
+
+    def title(self):
+        return ""
+
+
+def test_scrape_waits_for_the_first_card_before_counting(config):
+    """Every portal renders results in JavaScript after the document loads.
+    A container selector that matches at once -- `main` does, on any page --
+    used to hand control back before a single card existed, so count() said
+    zero for a page about to be full of them."""
+    from jobauto.portals import generic
+
+    events: list[str] = []
+    adapter = _diag_adapter(config, {"url_template": "https://x",
+                                     "results_container": "main",
+                                     "result_card": ".card"})
+    adapter.page = _RenderingPage(events)
+    list(adapter._scrape_page())
+
+    assert events.index("container") < events.index(
+        f"wait:attached:{generic.CARD_WAIT_MS}") < events.index("count")
+
+
+def test_a_page_with_no_cards_still_reports_zero_not_an_error(config):
+    class _Never(_CardsThatArrive):
+        def wait_for(self, state="attached", timeout=0):
+            raise TimeoutError("never attached")
+
+    class _EmptyPage(_RenderingPage):
+        def locator(self, sel):
+            return _Never(self.events)
+
+    adapter = _diag_adapter(config, {"url_template": "https://x",
+                                     "result_card": ".card"})
+    adapter.page = _EmptyPage([])
+    assert list(adapter._scrape_page()) == []
+    assert adapter.last_card_count == 0

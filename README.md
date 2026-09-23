@@ -536,6 +536,7 @@ tasks still running.
 | `jobauto agent` | Run the sync agent in this window |
 | `jobauto autostart` | Keep the agent running via Task Scheduler |
 | `jobauto autostart --status` | Why is the dashboard showing offline? |
+| `jobauto dump --portal hirist` | Save a portal's real results page under `data/debug/` -- for fixing selectors when a search finds nothing |
 | `jobauto cloud` | Run the hosted app locally, to try it |
 | `jobauto export-session` | Copy your portal logins to another machine |
 | `jobauto import-session --file F` | Restore logins exported elsewhere |

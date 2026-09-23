@@ -123,3 +123,4 @@ def test_an_unreadable_page_does_not_crash_the_guard():
 
     portal = PortalConfig(id="x", name="X", enabled=True, base_url="", adapter="")
     Probe(portal, None, Broken()).guard_challenge()    # must not raise
+
