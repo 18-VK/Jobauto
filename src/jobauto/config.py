@@ -113,6 +113,10 @@ class Config:
     profile: dict[str, Any]
     preferences: dict[str, Any]
     portals: dict[str, PortalConfig]
+    # Portal ids switched off by preferences.portals.disabled rather than by
+    # their own YAML. Kept apart so `doctor` can say which, and so pausing
+    # every portal from the dashboard is a state rather than a config error.
+    disabled_by_preferences: set[str] = field(default_factory=set)
 
     # -- convenience accessors so call sites don't dig through raw dicts ----
     @property
@@ -171,8 +175,31 @@ def load_config(config_dir: Path | None = None) -> Config:
         )
 
     cfg = Config(profile=profile, preferences=preferences, portals=portals)
+    apply_portal_preferences(cfg)
     validate(cfg)
     return cfg
+
+
+def apply_portal_preferences(cfg: Config) -> None:
+    """Switch off the portals named in preferences.portals.disabled.
+
+    Preferences are what the cloud syncs, so this is how a portal turned off
+    in the dashboard stays off on the PC. The portal's own YAML `enabled:`
+    still applies; this can only turn portals off, never on, so a portal
+    disabled in its file for a reason cannot be re-enabled from a phone.
+    Unknown ids are ignored: the dashboard may name a portal this checkout
+    does not have.
+    """
+    block = cfg.preferences.get("portals") or {}
+    names = block.get("disabled") if isinstance(block, dict) else None
+    if not isinstance(names, list):
+        return
+    for name in names:
+        pid = str(name).strip().lower()
+        portal = cfg.portals.get(pid)
+        if portal is not None:
+            portal.enabled = False
+            cfg.disabled_by_preferences.add(pid)
 
 
 def validate(cfg: Config) -> None:
@@ -215,7 +242,11 @@ def validate(cfg: Config) -> None:
 
     if not cfg.portals:
         errors.append("no portal configs found in config/portals/")
-    if not cfg.enabled_portals():
+    # A config where the portal files themselves disable everything is a
+    # mistake worth failing on. Every portal switched off from the dashboard
+    # is a deliberate pause, and failing here would make the agent reject the
+    # whole synced preferences file -- undoing every other edit in it.
+    if not cfg.enabled_portals() and not cfg.disabled_by_preferences:
         errors.append("every portal is disabled -- nothing would run")
 
     # Only warn about identity at run time, not load time: `doctor` and

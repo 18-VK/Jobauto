@@ -55,7 +55,12 @@ def available(config: Config) -> dict[str, str]:
     instead of raising, so one broken adapter does not hide the others."""
     out: dict[str, str] = {}
     for pid, portal in config.portals.items():
-        state = "enabled" if portal.enabled else "disabled"
+        if portal.enabled:
+            state = "enabled"
+        elif pid in getattr(config, "disabled_by_preferences", ()):
+            state = "disabled in preferences (dashboard: Portals)"
+        else:
+            state = "disabled in its yaml"
         try:
             resolve(portal)
         except Exception as exc:

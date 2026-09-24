@@ -307,6 +307,19 @@ Stuck-task reapers in `cloud/app.py` (`_reap_orphaned_tasks`,
 
 `db.py` normalises `postgres://` → `postgresql+psycopg://`.
 
+## Switching portals off
+
+`preferences.portals.disabled: [indeed, hirist]` switches portals off
+everywhere -- search, apply, login. It lives in preferences because that is
+the one file the cloud syncs, so the dashboard's *Portals* section reaches
+the PC. `apply_portal_preferences()` in `config.py` flips `portal.enabled`
+at load, so every existing check works unchanged; it can only turn portals
+off, never override a portal's own `enabled: false`. Pausing *every* portal
+this way is a legitimate state, not a `ConfigError` -- otherwise the agent
+would reject the whole synced file. `doctor` says which of the two disabled a
+portal. `GET /api/portals` lists the shipped portal files (selectors only,
+nothing secret) with the current switch.
+
 ## Config layering
 
 `config/<name>.local.yaml` overrides `config/<name>.yaml` when present.

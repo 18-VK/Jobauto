@@ -35,7 +35,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     document.querySelectorAll('.view').forEach((v) => v.classList.remove('is-active'));
     tab.classList.add('is-active');
     $(`#view-${tab.dataset.view}`).classList.add('is-active');
-    if (tab.dataset.view === 'preferences') { loadPrefs(); loadSchedule(); }
+    if (tab.dataset.view === 'preferences') { loadPrefs(); loadSchedule(); loadPortals(); }
     if (tab.dataset.view === 'devices') loadDevices();
     if (tab.dataset.view === 'applications') loadApps();
   });
@@ -592,6 +592,58 @@ $('#btn-sched-save').onclick = async () => {
     loadSchedule();
   } catch (e) { showSchedMsg(e.message, false); } finally { btn.disabled = false; }
 };
+
+/* ------------------------------------------------------------ portals */
+/* A portal switched off here must stop everything on the PC -- search,
+   apply, login. It rides in the preferences YAML as `portals.disabled`,
+   because preferences are the one thing the cloud already syncs down. */
+async function loadPortals() {
+  let d;
+  try { d = await api('/api/portals'); } catch { return; }
+  const wrap = $('#portal-list');
+  wrap.innerHTML = '';
+  d.portals.forEach((p) => {
+    const l = el('label');
+    const box = el('input');
+    box.type = 'checkbox'; box.className = 'portal-box'; box.value = p.id;
+    box.checked = !!p.enabled;
+    l.append(box, document.createTextNode(' ' + p.name));
+    wrap.append(l);
+  });
+  const off = d.portals.filter((p) => !p.enabled).map((p) => p.name);
+  $('#portal-note').textContent = off.length
+    ? `switched off: ${off.join(', ')}` : 'all portals on';
+}
+
+$('#btn-portals-save').onclick = async () => {
+  const btn = $('#btn-portals-save');
+  const disabled = [...document.querySelectorAll('.portal-box')]
+    .filter((c) => !c.checked).map((c) => c.value);
+
+  let text = $('#pref-yaml').value || '';
+  const block = ['portals:',
+                 `  disabled: [${disabled.map((d) => `"${d}"`).join(', ')}]`]
+    .join('\n');
+  text = replaceYamlBlock(text, 'portals', block);
+
+  btn.disabled = true;
+  try {
+    await api('/api/preferences', { method: 'POST', body: JSON.stringify({ yaml: text }) });
+    $('#pref-yaml').value = text;
+    showPortalsMsg(disabled.length === document.querySelectorAll('.portal-box').length
+      ? 'Saved. Every portal is off -- nothing will run until you turn one back on.'
+      : (agentOnline ? 'Saved. Your PC will pick this up within a minute.'
+                     : 'Saved. It applies when your PC next comes online.'), true);
+    loadPortals();
+  } catch (e) { showPortalsMsg(e.message, false); } finally { btn.disabled = false; }
+};
+
+function showPortalsMsg(text, ok) {
+  const box = $('#portals-msg');
+  box.className = 'msg ' + (ok ? 'ok' : 'bad');
+  box.textContent = text;
+  box.hidden = false;
+}
 
 function showSchedMsg(text, ok) {
   const box = $('#sched-msg');

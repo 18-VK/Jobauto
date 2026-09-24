@@ -1306,3 +1306,56 @@ def test_a_stale_cookie_cannot_be_reused_after_logout(client):
         client.set_cookie("session", cookie)
         # The session payload itself no longer carries a user_id.
         assert client.get("/api/summary").status_code == 401
+
+
+# ---------------------------------------------------------------- portals
+def test_portals_endpoint_lists_every_known_portal_as_enabled_by_default(client):
+    signup(client)
+    portals = client.get("/api/portals").get_json()["portals"]
+    ids = {p["id"] for p in portals}
+    assert {"naukri", "linkedin", "indeed", "instahyre", "hirist"} <= ids
+    assert all(p["enabled"] for p in portals)
+
+
+def test_portals_endpoint_reflects_the_disabled_list(client):
+    signup(client)
+    prefs = client.get("/api/preferences").get_json()["yaml"]
+    client.post("/api/preferences",
+                json={"yaml": prefs + "\nportals:\n  disabled: [indeed]\n"})
+    by_id = {p["id"]: p for p in client.get("/api/portals").get_json()["portals"]}
+    assert by_id["indeed"]["enabled"] is False
+    assert by_id["naukri"]["enabled"] is True
+
+
+def test_a_disabled_list_survives_the_save_validator(client):
+    signup(client)
+    prefs = client.get("/api/preferences").get_json()["yaml"]
+    res = client.post("/api/preferences",
+                      json={"yaml": prefs + "\nportals:\n  disabled: [indeed]\n"})
+    assert res.status_code == 200
+
+
+def test_a_malformed_disabled_list_is_rejected_with_a_reason(client):
+    signup(client)
+    prefs = client.get("/api/preferences").get_json()["yaml"]
+    res = client.post("/api/preferences",
+                      json={"yaml": prefs + "\nportals:\n  disabled: indeed\n"})
+    assert res.status_code == 400
+    assert "portals.disabled" in res.get_json()["error"]
+
+
+def test_the_agent_receives_the_disabled_list(client):
+    """The whole point: what is switched off in the browser reaches the PC."""
+    signup(client)
+    tok = agent_token(client)
+    prefs = client.get("/api/preferences").get_json()["yaml"]
+    client.post("/api/preferences",
+                json={"yaml": prefs + "\nportals:\n  disabled: [hirist]\n"})
+    synced = client.get("/api/agent/preferences", headers=H(tok)).get_json()["yaml"]
+    assert yaml.safe_load(synced)["portals"]["disabled"] == ["hirist"]
+
+
+def test_portals_endpoint_requires_a_browser_session(client):
+    signup(client)
+    client.get("/logout")
+    assert client.get("/api/portals").status_code == 401

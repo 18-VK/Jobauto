@@ -489,6 +489,36 @@ def create_app() -> Flask:
             return jsonify({"yaml": user.preferences_yaml,
                             "updated": _iso(user.preferences_updated)})
 
+    @app.get("/api/portals")
+    @auth.login_required
+    def api_portals():
+        """Every portal this build knows, and whether preferences have it
+        switched off. Names come from the shipped portal files, which hold
+        selectors and nothing secret; no browser or profile is touched."""
+        from ..config import DEFAULTS_DIR
+
+        with session() as s:
+            user = s.get(User, g.user.id)
+            try:
+                parsed = yaml.safe_load(user.preferences_yaml or "") or {}
+            except Exception:
+                parsed = {}
+        block = parsed.get("portals") if isinstance(parsed, dict) else None
+        disabled = set()
+        if isinstance(block, dict) and isinstance(block.get("disabled"), list):
+            disabled = {str(x).strip().lower() for x in block["disabled"]}
+
+        out = []
+        for path in sorted((DEFAULTS_DIR / "portals").glob("*.yaml")):
+            try:
+                data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                data = {}
+            pid = str(data.get("id") or path.stem)
+            out.append({"id": pid, "name": data.get("name", pid),
+                        "enabled": pid not in disabled})
+        return jsonify({"portals": out})
+
     @app.post("/api/preferences")
     @auth.login_required
     def api_save_prefs():
@@ -1082,6 +1112,15 @@ def _validate_preferences(parsed: dict) -> str:
             if abs(total - 1.0) > 0.001:
                 problems.append(
                     f"scoring weights must sum to 1.0, got {total:.3f}")
+
+    portals = parsed.get("portals")
+    if portals is not None:
+        disabled = portals.get("disabled") if isinstance(portals, dict) else None
+        if not isinstance(portals, dict) or (
+                disabled is not None and not isinstance(disabled, list)):
+            problems.append("portals.disabled must be a list of portal ids")
+        elif disabled and not all(isinstance(x, str) for x in disabled):
+            problems.append("portals.disabled entries must be portal ids")
 
     th = parsed.get("thresholds") or {}
     if th:
