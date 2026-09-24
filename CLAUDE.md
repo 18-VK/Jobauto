@@ -335,6 +335,29 @@ sync would undo every other edit in the file. The dashboard keeps one
 `portals:` block (`disabled` + `custom`) in `portalState` and re-serialises
 it whole on every save, so the two forms cannot drop each other's data.
 
+### Detection: a name and a URL is enough
+
+`portals/detect.py` finds a results page's card without being told what it
+looks like: the element that repeats most, with a job link and at least one
+other short text in each copy (`MIN_CARDS`, richness check), preferring the
+outermost such repeat. Fields are read relative to it -- class-name hints
+(`_HINTS`) first, document order second -- and minted class names
+(`_MINTED`) are never used. `tokenise_search_url` turns the typed role/city
+into `{keywords}`/`{location}` or the slug tokens. Pure functions over HTML;
+`tests/test_detect.py` runs them on a synthetic board page with nav and
+sidebar noise.
+
+Flow: dashboard saves `portals.custom.<id>` with `detect: true` (validator
+requires only name, base_url, url_template). `load_config` materialises it
+**disabled** with `raw["pending"]` so `login --portal <id>` works but no
+search runs. `LocalAgent.detect_pending_portals` runs at the top of every
+`tick`, once an hour per portal, in that portal's own profile; it also checks
+the login page (given, or the first sign-in link found) and reports `checks`.
+`POST /api/agent/portals/<id>/detected` merges the result into the YAML
+using `_replace_yaml_block` (same routine as the dashboard), sets
+`detect: false`, and the next sync switches the portal on. `jobauto detect`
+is the local-only equivalent.
+
 ## Config layering
 
 `config/<name>.local.yaml` overrides `config/<name>.yaml` when present.

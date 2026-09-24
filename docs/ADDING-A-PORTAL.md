@@ -8,6 +8,29 @@ Time: about ten minutes for a site you can already sign in to.
 
 ---
 
+## The short way (most sites)
+
+1. On the site, in your normal browser, run a search for **your first
+   configured role in your first configured city** (see Preferences). Copy the
+   address bar.
+2. Dashboard -> **Preferences -> Add a portal**: type a name, paste the
+   address, **Add portal**.
+3. Your PC looks at that page on its next poll (within a minute if it is
+   online) and the Portals list updates with what it found:
+
+   - **found 24 jobs** -- done. It also shows *search page: ok* and
+     *login page: ok* if it could reach the site's sign-in page.
+   - **needs sign-in** -- the site wants an account before it shows results.
+     On your PC run `jobauto login --portal <id>`, sign in, then press
+     **Try again** in the list.
+   - **no job list found** -- the address was not a results page. Search on
+     the site first, then paste the address you land on.
+
+That is the whole thing. The steps below are the long way, for a site the
+automatic look cannot read -- and they explain what the automatic look does.
+
+---
+
 ## 0. Before you start
 
 - The site has a **search page** whose URL carries the query (for example

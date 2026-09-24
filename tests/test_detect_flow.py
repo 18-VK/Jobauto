@@ -49,8 +49,11 @@ def test_a_name_and_a_url_is_accepted_when_flagged_for_detection(client):
 def test_without_the_flag_the_selectors_are_still_required(client):
     signup(client)
     prefs = client.get("/api/preferences").get_json()["yaml"]
+    # Drop the whole line, indentation included: removing only the text left
+    # `search:` indented under a quoted scalar, which YAML read as something
+    # else entirely and the validator never saw a portal at all.
     res = client.post("/api/preferences",
-                      json={"yaml": prefs + _ADDED.replace("detect: true\n", "")})
+                      json={"yaml": prefs + _ADDED.replace("      detect: true\n", "")})
     assert res.status_code == 400
     assert "result_card" in res.get_json()["error"]
 
