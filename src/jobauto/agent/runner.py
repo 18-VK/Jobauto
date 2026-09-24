@@ -14,6 +14,7 @@ import json
 import os
 import platform
 import random
+import re
 import threading
 import time
 from pathlib import Path
@@ -22,6 +23,7 @@ from typing import Any, Callable
 import requests
 import yaml
 
+from .. import browser as browser_mod
 from ..config import Config, ConfigError, load_config, CONFIG_DIR
 from ..db import Database
 from ..pipeline import Pipeline
@@ -93,6 +95,10 @@ class CloudClient:
         return self._call("POST", "/api/agent/applications",
                           json={"applications": apps})
 
+    def report_detected(self, portal_id: str, payload: dict) -> dict:
+        return self._call("POST", f"/api/agent/portals/{portal_id}/detected",
+                          json=payload)
+
     def clear_queued_jobs(self, fingerprints: list[str]) -> dict:
         if not fingerprints:
             return {"ok": True, "cleared": 0}
@@ -117,6 +123,9 @@ class LocalAgent:
         self.headless = headless
         self.log = log
         self._prefs_stamp: str | None = None
+        # When each pending portal was last looked at, so a page that cannot
+        # be read is not re-opened on every poll.
+        self._detect_attempted: dict[str, float] = {}
 
     # ------------------------------------------------------- preferences
     def sync_preferences(self) -> None:
@@ -357,8 +366,160 @@ class LocalAgent:
         return settled
 
     # ------------------------------------------------------------- loop
+    # ------------------------------------------------ portal detection
+    # Once an hour per portal at most: a page that cannot be read now will
+    # not read differently in thirty seconds, and each attempt opens a
+    # browser.
+    DETECT_RETRY_SECONDS = 3600
+    _LOGIN_LINK = re.compile(
+        r'href=["\']([^"\']*(?:login|signin|sign-in|log-in)[^"\']*)["\']',
+        re.IGNORECASE)
+    _LOGIN_URL_MARKERS = ("/login", "/signin", "nlogin", "/auth", "sign-in")
+
+    def detect_pending_portals(self, cfg: Config) -> int:
+        """Work out selectors for portals added with only a name and a URL.
+
+        The dashboard cannot see a rendered page; this PC can. For each
+        custom portal flagged `detect`, open the search URL in that portal's
+        own profile (signed in, if the user has done `login --portal`), find
+        the repeating job cards, tokenise the search terms, check the login
+        page can be reached, and report it all. The cloud writes it into the
+        portal definition, the next preference sync brings it back down, and
+        the portal switches on.
+        """
+        report = getattr(self.cloud, "report_detected", None)
+        block = cfg.preferences.get("portals") or {}
+        custom = block.get("custom") if isinstance(block, dict) else None
+        if report is None or not isinstance(custom, dict):
+            return 0
+
+        from ..portals import detect as detect_mod
+        roles = cfg.search.get("roles") or [{}]
+        first = roles[0] if isinstance(roles[0], dict) else {}
+        role = str(first.get("title", ""))
+        locs = cfg.search.get("locations", {}).get("preferred") or [""]
+        location = str(locs[0] or "")
+
+        done = 0
+        for raw_id, data in custom.items():
+            pid = str(raw_id).strip().lower()
+            if not isinstance(data, dict) or not data.get("detect"):
+                continue
+            url = str((data.get("search") or {}).get("url_template") or "")
+            if not url:
+                continue
+            last = self._detect_attempted.get(pid, 0.0)
+            if time.time() - last < self.DETECT_RETRY_SECONDS:
+                continue
+            self._detect_attempted[pid] = time.time()
+
+            name = str(data.get("name") or pid)
+            login_hint = str((data.get("auth") or {}).get("login_url") or "")
+            self.log(f"  looking at {name} to work out its selectors")
+            payload = self._detect_one(cfg, pid, name, url, role, location,
+                                       login_hint, detect_mod)
+            if payload.get("cards"):
+                self.log(f"    found {payload['cards']} jobs -- "
+                         f"{payload['search']['result_card']}")
+            else:
+                self.log(f"    {payload.get('error') or 'nothing found'}")
+            try:
+                report(pid, payload)
+                done += 1
+            except AgentError as exc:
+                self.log(f"    could not report it: {exc}")
+        return done
+
+    def _detect_one(self, cfg: Config, pid: str, name: str, url: str,
+                    role: str, location: str, login_hint: str,
+                    detect_mod: Any) -> dict:
+        """One look at one portal: the search page first, then the login
+        page. Both are reported as checks the dashboard can show, because
+        "added" on its own does not say whether the site will ever work."""
+        from ..config import DEFAULT_CUSTOM_ADAPTER, PortalConfig
+
+        m = re.match(r"^(https?://[^/]+)", url)
+        origin = m.group(1) if m else url
+        stub = PortalConfig(id=pid, name=name, enabled=True, base_url=origin,
+                            adapter=DEFAULT_CUSTOM_ADAPTER)
+        template, placed = detect_mod.tokenise_search_url(url, role, location)
+        out: dict[str, Any] = {"template": template, "placed": placed,
+                               "cards": 0, "notes": [], "error": "",
+                               "checks": {"search_page": "", "login_page": ""}}
+        checks = out["checks"]
+        try:
+            with browser_mod.session(stub, cfg, headless=self.headless) as page:
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                # Results are drawn after load on every board there is.
+                page.wait_for_timeout(5000)
+                html = page.content()
+                landed = str(page.url or "")
+
+                if any(k in landed.lower() for k in self._LOGIN_URL_MARKERS):
+                    checks["search_page"] = "needs sign-in"
+                    checks["login_page"] = "found: " + landed
+                    out["login_url"] = landed
+                    out["error"] = (f"the site wants you signed in before it "
+                                    f"shows results. On this PC run: jobauto "
+                                    f"login --portal {pid}, then Try again")
+                    return out
+
+                det = detect_mod.detect(html)
+                if det is None:
+                    checks["search_page"] = "loaded, but no job list found"
+                    out["error"] = ("no repeating list of job links on that "
+                                    "page -- paste the address of the results "
+                                    "page itself, after searching, signed in")
+                else:
+                    checks["search_page"] = f"ok, {det.cards} jobs"
+                    out["search"] = det.to_search()
+                    out["cards"] = det.cards
+                    out["notes"] = list(det.notes)
+
+                # The login page: the one given, else the first sign-in link
+                # on the search page. Reached once, so a wrong address is
+                # reported here rather than discovered at `login` time.
+                candidate = login_hint
+                if not candidate:
+                    found = self._LOGIN_LINK.search(html)
+                    if found:
+                        candidate = found.group(1)
+                        if candidate.startswith("/"):
+                            candidate = origin + candidate
+                if candidate and candidate.startswith("http"):
+                    try:
+                        resp = page.goto(candidate, wait_until="domcontentloaded",
+                                         timeout=30000)
+                        ok = resp is None or getattr(resp, "ok", True)
+                        checks["login_page"] = ("ok" if ok else
+                                                f"returned {getattr(resp, 'status', '?')}")
+                        if ok:
+                            out["login_url"] = candidate
+                    except Exception as exc:
+                        checks["login_page"] = f"unreachable: {type(exc).__name__}"
+                else:
+                    checks["login_page"] = ("not found on the page -- sign in "
+                                            "by hand once if the site needs it")
+        except Exception as exc:
+            checks["search_page"] = checks["search_page"] or "unreachable"
+            out["error"] = f"could not open the page: {type(exc).__name__}: {exc}"[:240]
+            return out
+
+        if out["cards"] and not placed:
+            out["notes"].append(
+                f"your role and city were not found in the URL, so it is used "
+                f"as-is. To search other roles, run a search on the site for "
+                f"'{role}' in '{location}' and paste that URL instead")
+        return out
+
     def tick(self) -> None:
         self.sync_preferences()
+        # Detection first, so a portal added a moment ago is looked at on this
+        # poll rather than after whatever task is queued.
+        try:
+            self.detect_pending_portals(load_config())
+        except Exception as exc:
+            self.log(f"  portal detection skipped: {type(exc).__name__}: {exc}")
         work = self.cloud.work()
         task, queued = work.get("task"), work.get("queued_jobs") or []
 

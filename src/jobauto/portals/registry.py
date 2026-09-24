@@ -57,6 +57,9 @@ def available(config: Config) -> dict[str, str]:
     for pid, portal in config.portals.items():
         if portal.enabled:
             state = "enabled"
+        elif portal.raw.get("pending"):
+            state = ("waiting for selectors -- your PC works them out on its "
+                     "next poll; sign in first with: login --portal " + pid)
         elif pid in getattr(config, "disabled_by_preferences", ()):
             state = "disabled in preferences (dashboard: Portals)"
         else:

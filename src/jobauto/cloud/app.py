@@ -528,8 +528,62 @@ def create_app() -> Flask:
                     continue
                 out.append({"id": pid, "name": data.get("name", pid),
                             "enabled": pid not in disabled, "custom": True,
+                            "detect": bool(data.get("detect")),
+                            "detected": data.get("detected") or None,
                             "definition": data})
         return jsonify({"portals": out})
+
+    @app.post("/api/agent/portals/<portal_id>/detected")
+    @auth.agent_required
+    def agent_portal_detected(portal_id: str):
+        """The PC looked at a portal added with only a name and a URL, and
+        this is what it found. Written into the portal's definition so the
+        next preference sync carries it back down and the portal switches on.
+
+        Only the portals block of the YAML is rewritten; everything else in
+        the file is the user's and is kept byte for byte.
+        """
+        pid = portal_id.strip().lower()
+        body = request.get_json(silent=True) or {}
+        with session() as s:
+            user = s.get(User, g.agent.user_id)
+            try:
+                parsed = yaml.safe_load(user.preferences_yaml or "") or {}
+            except Exception:
+                parsed = {}
+            block = parsed.get("portals") if isinstance(parsed, dict) else None
+            custom = (block or {}).get("custom") if isinstance(block, dict) else None
+            if not isinstance(custom, dict) or not isinstance(custom.get(pid), dict):
+                return jsonify({"error": "no such custom portal"}), 404
+
+            entry = custom[pid]
+            search = entry.setdefault("search", {})
+            found = body.get("search") if isinstance(body.get("search"), dict) else None
+            if found:
+                search.update(found)
+            if body.get("placed") and body.get("template"):
+                search["url_template"] = str(body["template"])
+            # The login page the PC found and reached. Kept only if the user
+            # did not already give one.
+            login_url = str(body.get("login_url") or "")
+            if login_url.startswith("http"):
+                entry.setdefault("auth", {}).setdefault("login_url", login_url)
+            checks = body.get("checks") if isinstance(body.get("checks"), dict) else {}
+            entry["detect"] = False
+            entry["detected"] = {
+                "at": _iso(utcnow()),
+                "cards": int(body.get("cards") or 0),
+                "notes": [str(n) for n in (body.get("notes") or [])][:6],
+                "error": str(body.get("error") or "")[:300],
+                "checks": {str(k): str(v)[:160] for k, v in checks.items()},
+            }
+
+            user.preferences_yaml = _replace_yaml_block(
+                user.preferences_yaml or "", "portals", _portals_block_yaml(block))
+            user.preferences_updated = utcnow()
+            s.commit()
+        auth.touch_agent(g.agent.id, f"detected {pid}")
+        return jsonify({"ok": True, "cards": int(body.get("cards") or 0)})
 
     @app.post("/api/preferences")
     @auth.login_required
@@ -1175,13 +1229,40 @@ def _validate_custom_portals(custom: Any) -> list[str]:
         if not isinstance(data, dict):
             out.append(f"portals.custom.{pid} must be a mapping")
             continue
-        missing = [".".join(path) for path in _CUSTOM_REQUIRED
-                   if not _dig(data, path)]
+        # Added with just a name and a URL: the PC fills the selectors in.
+        required = (_CUSTOM_REQUIRED[:3] if data.get("detect")
+                    else _CUSTOM_REQUIRED)
+        missing = [".".join(path) for path in required if not _dig(data, path)]
         if missing:
             out.append(f"portals.custom.{pid} is missing {', '.join(missing)}")
         if not str(data.get("base_url", "")).startswith(("http://", "https://")):
             out.append(f"portals.custom.{pid}.base_url must start with http")
     return out
+
+
+def _replace_yaml_block(text: str, name: str, block: str) -> str:
+    """Swap one top-level block of a YAML document, keeping the rest exactly
+    as written. The same routine the dashboard uses, so a server-side edit
+    and a browser-side edit leave the file in the same shape."""
+    out: list[str] = []
+    skipping = False
+    for line in (text or "").split("\n"):
+        if skipping:
+            if line.strip() and not line[0].isspace():
+                skipping = False
+            else:
+                continue
+        if line.startswith(name + ":"):
+            skipping = True
+            continue
+        out.append(line)
+    return "\n".join(out).rstrip("\n") + "\n\n" + block.rstrip("\n") + "\n"
+
+
+def _portals_block_yaml(block: dict) -> str:
+    body = yaml.safe_dump(block, sort_keys=False, allow_unicode=True,
+                          default_flow_style=False).rstrip("\n")
+    return "portals:\n" + "\n".join("  " + line for line in body.split("\n"))
 
 
 def _default_preferences_yaml() -> str:

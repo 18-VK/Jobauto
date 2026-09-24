@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import yaml
 import sys
 from pathlib import Path
 from typing import Any
@@ -248,6 +249,70 @@ def cmd_discover(args: argparse.Namespace) -> int:
         return 0
     finally:
         db.close()
+
+
+def cmd_detect(args: argparse.Namespace) -> int:
+    """Work out a portal's selectors from a search you ran, and print the
+    portal file. The local-only counterpart of the dashboard's Add a portal:
+    same detection, same shape, written to config/portals/ with --write."""
+    from .browser import session
+    from .config import CONFIG_DIR, DEFAULT_CUSTOM_ADAPTER, PortalConfig
+    from .portals import detect as detect_mod
+    import re as _re
+
+    cfg = _load()
+    pid = (args.id or _re.sub(r"[^a-z0-9]+", "-", args.name.lower())).strip("-")[:30]
+    if pid in cfg.portals:
+        print(f"  {pid} already exists -- pick another --id")
+        return 1
+    origin = _re.match(r"^(https?://[^/]+)", args.url)
+    if not origin:
+        print("  --url must be the full address of a search results page")
+        return 1
+    stub = PortalConfig(id=pid, name=args.name, enabled=True,
+                        base_url=origin.group(1), adapter=DEFAULT_CUSTOM_ADAPTER)
+    roles = cfg.search.get("roles") or [{}]
+    role = str(roles[0].get("title", "")) if isinstance(roles[0], dict) else ""
+    location = str((cfg.search.get("locations", {}).get("preferred") or [""])[0])
+
+    print()
+    print(f"  opening {args.url}")
+    with session(stub, cfg, headless=args.headless) as page:
+        page.goto(args.url, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(5000)
+        html = page.content()
+        landed = str(page.url or "")
+    if any(m in landed.lower() for m in ("/login", "/signin", "nlogin", "/auth")):
+        print(f"  the site sent us to its sign-in page. Run: "
+              f"{invocation()} login --portal {pid}   then try again")
+        return 1
+    det = detect_mod.detect(html)
+    if det is None:
+        print("  no repeating list of job links on that page. Paste the address")
+        print("  of the results page itself, after searching, signed in.")
+        return 1
+    template, placed = detect_mod.tokenise_search_url(args.url, role, location)
+    definition = detect_mod.definition_from(args.name, args.url, template, det)
+
+    print(f"  found {det.cards} jobs   card: {det.result_card}   title: {det.title}")
+    for note in det.notes:
+        print(f"  note: {note}")
+    if not placed:
+        print(f"  note: '{role}' / '{location}' were not in the URL, so it is used as-is")
+    block = {"id": pid, "enabled": True,
+             "adapter": DEFAULT_CUSTOM_ADAPTER, **definition}
+    text = yaml.safe_dump(block, sort_keys=False, allow_unicode=True)
+    print()
+    print(text)
+    if args.write:
+        target = CONFIG_DIR / "portals" / f"{pid}.yaml"
+        target.write_text(text, encoding="utf-8")
+        print(f"  written to {target}")
+        print(f"  next: {invocation()} login --portal {pid}   then   "
+              f"{invocation()} dump --portal {pid}")
+    else:
+        print("  add --write to save it as a portal file")
+    return 0
 
 
 def cmd_dump(args: argparse.Namespace) -> int:
@@ -657,6 +722,17 @@ def build_parser() -> argparse.ArgumentParser:
     portal_arg(sp)
     headless_arg(sp)
     sp.set_defaults(func=cmd_discover)
+
+    sp = sub.add_parser("detect", help="work out a new portal's selectors "
+                                       "from a search you ran")
+    sp.add_argument("--name", required=True, help="how the portal is shown")
+    sp.add_argument("--url", required=True,
+                    help="address of a search results page for your first role and city")
+    sp.add_argument("--id", default="", help="portal id (default: from the name)")
+    sp.add_argument("--write", action="store_true",
+                    help="save it to config/portals/<id>.yaml")
+    headless_arg(sp)
+    sp.set_defaults(func=cmd_detect)
 
     sp = sub.add_parser("dump", help="save a portal's real results page "
                                      "for fixing selectors")

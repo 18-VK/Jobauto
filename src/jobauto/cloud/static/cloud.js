@@ -656,6 +656,35 @@ async function loadPortals() {
     l.append(box, document.createTextNode(' ' + p.name));
     if (p.custom) {
       l.append(el('span', 'tag', 'custom'));
+      // Where a name-and-URL portal has got to. The PC does the looking;
+      // this is the only place that says whether it has happened yet.
+      if (p.detect) {
+        l.append(el('span', 'tag tagq', agentOnline
+          ? 'waiting for your PC to look at it'
+          : 'looked at when your PC is next online'));
+      } else if (p.detected && p.detected.error) {
+        l.append(el('span', 'tag warn', p.detected.error));
+        const retry = el('button', 'btn btn-sm btn-quiet', 'Try again');
+        retry.type = 'button';
+        retry.onclick = async () => {
+          portalState.custom[p.id].detect = true;
+          delete portalState.custom[p.id].detected;
+          try { await savePortalsBlock(); loadPortals(); }
+          catch (e) { showPortalsMsg(e.message, false); }
+        };
+        l.append(document.createTextNode(' '), retry);
+      } else if (p.detected) {
+        l.append(el('span', 'tag good', `found ${p.detected.cards} jobs`));
+        // The two checks the PC ran while it was there: did the search page
+        // show a job list, and can the login page be reached.
+        const c = p.detected.checks || {};
+        if (c.search_page) l.append(el('span', 'tag', `search page: ${c.search_page}`));
+        if (c.login_page) {
+          const bad = /unreachable|returned|not found/.test(c.login_page);
+          l.append(el('span', 'tag' + (bad ? ' warn' : ''), `login page: ${c.login_page}`));
+        }
+        (p.detected.notes || []).forEach((n) => l.append(el('span', 'tag', n)));
+      }
       const edit = el('button', 'btn btn-sm btn-quiet', 'Edit');
       edit.type = 'button';
       edit.onclick = () => fillCustomForm(p.id, p.definition);
@@ -693,6 +722,46 @@ $('#btn-portals-save').onclick = async () => {
     loadPortals();
   } catch (e) { showPortalsMsg(e.message, false); } finally { btn.disabled = false; }
 };
+
+/* --------------------------------------------- add a portal, the short way */
+/* Name and the address of a search. The PC works the rest out: it is the
+   only party that can see the page rendered and signed in. */
+$('#btn-qa-save').onclick = async () => {
+  const btn = $('#btn-qa-save');
+  const name = ($('#qa-name').value || '').trim();
+  const url = ($('#qa-url').value || '').trim();
+  if (!name) return showQaMsg('Needs a name.', false);
+  if (!/^https?:\/\/[^/]+/.test(url)) return showQaMsg('Needs the full address, starting https://', false);
+  const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
+  if (!/^[a-z][a-z0-9_-]{1,30}$/.test(id)) return showQaMsg('Pick a name with some letters in it.', false);
+  if (portalState.custom[id]) return showQaMsg(`${id} already exists -- remove it first, or use Edit.`, false);
+
+  portalState.custom[id] = {
+    name, base_url: url.match(/^https?:\/\/[^/]+/)[0],
+    detect: true,
+    auth: { mode: 'persistent_profile' },
+    search: { url_template: url, pagination: { max_pages: 3 } },
+  };
+  btn.disabled = true;
+  try {
+    await savePortalsBlock();
+    showQaMsg(agentOnline
+      ? `Added ${name}. Your PC is looking at it now; this list updates within a minute. If the site needs an account to show results, run on your PC first: jobauto login --portal ${id}`
+      : `Added ${name}. It will be looked at when your PC is next online. If the site needs an account to show results, run on your PC first: jobauto login --portal ${id}`, true);
+    $('#qa-name').value = ''; $('#qa-url').value = '';
+    loadPortals();
+  } catch (e) {
+    delete portalState.custom[id];
+    showQaMsg(e.message, false);
+  } finally { btn.disabled = false; }
+};
+
+function showQaMsg(text, ok) {
+  const box = $('#qa-msg');
+  box.className = 'msg ' + (ok ? 'ok' : 'bad');
+  box.textContent = text;
+  box.hidden = false;
+}
 
 /* --------------------------------------------------- add a portal */
 const CP_FIELDS = {

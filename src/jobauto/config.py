@@ -232,7 +232,12 @@ def _materialise_custom_portals(cfg: Config, block: dict[str, Any]) -> None:
             continue
         missing = [".".join(path) for path in _CUSTOM_REQUIRED
                    if not _dig(data, path)]
-        if missing:
+        # A portal added with just a name and a URL is waiting for the PC
+        # to work its selectors out. It exists -- so `login --portal <id>`
+        # can sign in to it and detection runs in that signed-in profile --
+        # but it is switched off, so no search runs against it yet.
+        pending = bool(data.get("detect")) and bool(missing)
+        if missing and not pending:
             cfg.custom_portal_problems.append(
                 f"{pid}: missing {', '.join(missing)}")
             continue
@@ -242,7 +247,7 @@ def _materialise_custom_portals(cfg: Config, block: dict[str, Any]) -> None:
         cfg.portals[pid] = PortalConfig(
             id=pid,
             name=str(data.get("name") or pid),
-            enabled=bool(data.get("enabled", True)),
+            enabled=bool(data.get("enabled", True)) and not pending,
             base_url=str(data["base_url"]),
             adapter=str(data.get("adapter") or DEFAULT_CUSTOM_ADAPTER),
             auth=data.get("auth") or {},
@@ -252,7 +257,7 @@ def _materialise_custom_portals(cfg: Config, block: dict[str, Any]) -> None:
             risk=data.get("risk") or {},
             profile_refresh=data.get("profile_refresh") or {},
             mode=str(data.get("mode") or "search"),
-            raw={**data, "id": pid, "custom": True},
+            raw={**data, "id": pid, "custom": True, "pending": pending},
         )
 
 
