@@ -594,12 +594,58 @@ $('#btn-sched-save').onclick = async () => {
 };
 
 /* ------------------------------------------------------------ portals */
-/* A portal switched off here must stop everything on the PC -- search,
-   apply, login. It rides in the preferences YAML as `portals.disabled`,
-   because preferences are the one thing the cloud already syncs down. */
+/* Everything about portals rides in one `portals:` block of the preferences
+   YAML -- `disabled` (switched off) and `custom` (added here) -- because
+   preferences are the one thing the cloud already syncs down. Both forms
+   below rewrite that whole block from shared state, so saving one never
+   drops what the other holds. */
+const portalState = { disabled: [], custom: {} };
+
+/* The block is a nested mapping of strings, so a serialiser this small is
+   correct for it: every scalar is a JSON string, which is valid YAML. */
+function yamlLines(obj, indent) {
+  const pad = ' '.repeat(indent);
+  const out = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined || v === null || v === '') continue;
+    if (Array.isArray(v)) {
+      out.push(`${pad}${k}: [${v.map((x) => JSON.stringify(String(x))).join(', ')}]`);
+    } else if (typeof v === 'object') {
+      const inner = yamlLines(v, indent + 2);
+      if (inner.length) { out.push(`${pad}${k}:`); out.push(...inner); }
+    } else if (typeof v === 'number' || typeof v === 'boolean') {
+      out.push(`${pad}${k}: ${v}`);
+    } else {
+      out.push(`${pad}${k}: ${JSON.stringify(String(v))}`);
+    }
+  }
+  return out;
+}
+
+function portalsBlock() {
+  const lines = ['portals:',
+    `  disabled: [${portalState.disabled.map((d) => JSON.stringify(d)).join(', ')}]`];
+  if (Object.keys(portalState.custom).length) {
+    lines.push('  custom:');
+    lines.push(...yamlLines(portalState.custom, 4));
+  }
+  return lines.join('\n');
+}
+
+async function savePortalsBlock() {
+  let text = $('#pref-yaml').value || '';
+  text = replaceYamlBlock(text, 'portals', portalsBlock());
+  await api('/api/preferences', { method: 'POST', body: JSON.stringify({ yaml: text }) });
+  $('#pref-yaml').value = text;
+}
+
 async function loadPortals() {
   let d;
   try { d = await api('/api/portals'); } catch { return; }
+  portalState.disabled = d.portals.filter((p) => !p.enabled).map((p) => p.id);
+  portalState.custom = {};
+  d.portals.filter((p) => p.custom).forEach((p) => { portalState.custom[p.id] = p.definition; });
+
   const wrap = $('#portal-list');
   wrap.innerHTML = '';
   d.portals.forEach((p) => {
@@ -608,6 +654,22 @@ async function loadPortals() {
     box.type = 'checkbox'; box.className = 'portal-box'; box.value = p.id;
     box.checked = !!p.enabled;
     l.append(box, document.createTextNode(' ' + p.name));
+    if (p.custom) {
+      l.append(el('span', 'tag', 'custom'));
+      const edit = el('button', 'btn btn-sm btn-quiet', 'Edit');
+      edit.type = 'button';
+      edit.onclick = () => fillCustomForm(p.id, p.definition);
+      const del = el('button', 'btn btn-sm btn-quiet', 'Remove');
+      del.type = 'button';
+      del.onclick = async () => {
+        if (!confirm(`Remove ${p.name}? Its saved logins on the PC are kept.`)) return;
+        delete portalState.custom[p.id];
+        portalState.disabled = portalState.disabled.filter((x) => x !== p.id);
+        try { await savePortalsBlock(); showPortalsMsg(`${p.name} removed.`, true); loadPortals(); }
+        catch (e) { showPortalsMsg(e.message, false); }
+      };
+      l.append(document.createTextNode(' '), edit, document.createTextNode(' '), del);
+    }
     wrap.append(l);
   });
   const off = d.portals.filter((p) => !p.enabled).map((p) => p.name);
@@ -617,26 +679,118 @@ async function loadPortals() {
 
 $('#btn-portals-save').onclick = async () => {
   const btn = $('#btn-portals-save');
-  const disabled = [...document.querySelectorAll('.portal-box')]
+  portalState.disabled = [...document.querySelectorAll('.portal-box')]
     .filter((c) => !c.checked).map((c) => c.value);
-
-  let text = $('#pref-yaml').value || '';
-  const block = ['portals:',
-                 `  disabled: [${disabled.map((d) => `"${d}"`).join(', ')}]`]
-    .join('\n');
-  text = replaceYamlBlock(text, 'portals', block);
+  const all = document.querySelectorAll('.portal-box').length;
 
   btn.disabled = true;
   try {
-    await api('/api/preferences', { method: 'POST', body: JSON.stringify({ yaml: text }) });
-    $('#pref-yaml').value = text;
-    showPortalsMsg(disabled.length === document.querySelectorAll('.portal-box').length
+    await savePortalsBlock();
+    showPortalsMsg(portalState.disabled.length === all
       ? 'Saved. Every portal is off -- nothing will run until you turn one back on.'
       : (agentOnline ? 'Saved. Your PC will pick this up within a minute.'
                      : 'Saved. It applies when your PC next comes online.'), true);
     loadPortals();
   } catch (e) { showPortalsMsg(e.message, false); } finally { btn.disabled = false; }
 };
+
+/* --------------------------------------------------- add a portal */
+const CP_FIELDS = {
+  id: 'cp-id', name: 'cp-name', base: 'cp-base', login: 'cp-login',
+  marker: 'cp-marker', url: 'cp-url', container: 'cp-container', card: 'cp-card',
+  title: 'cp-title', link: 'cp-link', company: 'cp-company', location: 'cp-location',
+  salary: 'cp-salary', posted: 'cp-posted', next: 'cp-next', pages: 'cp-pages',
+  jd: 'cp-jd', apply: 'cp-apply',
+};
+const cpVal = (k) => ($('#' + CP_FIELDS[k]).value || '').trim();
+
+function fillCustomForm(id, def) {
+  const s = def.search || {}, f = s.fields || {}, a = def.auth || {};
+  $('#cp-id').value = id;
+  $('#cp-id').disabled = true;             // the id is the key; rename = remove + add
+  $('#cp-name').value = def.name || '';
+  $('#cp-base').value = def.base_url || '';
+  $('#cp-login').value = a.login_url || '';
+  $('#cp-marker').value = a.logged_in_selector || '';
+  $('#cp-url').value = s.url_template || '';
+  $('#cp-container').value = s.results_container || '';
+  $('#cp-card').value = s.result_card || '';
+  $('#cp-title').value = f.title || '';
+  $('#cp-link').value = (f.url && f.url.selector) || '';
+  $('#cp-company').value = f.company || '';
+  $('#cp-location').value = f.location || '';
+  $('#cp-salary').value = f.salary || '';
+  $('#cp-posted').value = f.posted || '';
+  $('#cp-next').value = (s.pagination && s.pagination.next) || '';
+  $('#cp-pages').value = (s.pagination && s.pagination.max_pages) || 3;
+  $('#cp-jd').value = (def.detail && def.detail.jd_body) || '';
+  $('#cp-apply').value = (def.apply && def.apply.instant_button) || '';
+  $('#cp-note').textContent = `editing ${id}`;
+  $('#custom-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function clearCustomForm() {
+  Object.values(CP_FIELDS).forEach((i) => { $('#' + i).value = ''; });
+  $('#cp-pages').value = 3;
+  $('#cp-id').disabled = false;
+  $('#cp-note').textContent = '';
+}
+$('#btn-cp-clear').onclick = clearCustomForm;
+
+function customDefinitionFromForm() {
+  return {
+    name: cpVal('name'),
+    base_url: cpVal('base'),
+    auth: { mode: 'persistent_profile', login_url: cpVal('login'),
+            logged_in_selector: cpVal('marker') },
+    search: {
+      url_template: cpVal('url'),
+      results_container: cpVal('container'),
+      result_card: cpVal('card'),
+      fields: {
+        title: cpVal('title'),
+        url: cpVal('link') ? { selector: cpVal('link'), attr: 'href' } : '',
+        company: cpVal('company'), location: cpVal('location'),
+        salary: cpVal('salary'), posted: cpVal('posted'),
+      },
+      pagination: { next: cpVal('next'), max_pages: Number(cpVal('pages') || 3) },
+    },
+    detail: { jd_body: cpVal('jd') },
+    apply: { instant_button: cpVal('apply') },
+  };
+}
+
+$('#btn-cp-save').onclick = async () => {
+  const btn = $('#btn-cp-save');
+  const id = cpVal('id').toLowerCase();
+  const need = { id: 'an id', name: 'a name', base: 'the site URL', url: 'a search URL',
+                 card: 'a result-card selector', title: 'a title selector', link: 'a link selector' };
+  for (const [k, what] of Object.entries(need)) {
+    if (!cpVal(k)) return showCpMsg(`Needs ${what}.`, false);
+  }
+  if (!/^[a-z][a-z0-9_-]{1,30}$/.test(id)) {
+    return showCpMsg('Id: lowercase letters, digits, - or _ only.', false);
+  }
+
+  portalState.custom[id] = customDefinitionFromForm();
+  btn.disabled = true;
+  try {
+    await savePortalsBlock();               // the server validates and says why if not
+    showCpMsg(`Saved ${id}. On your PC: jobauto login --portal ${id}, then jobauto dump --portal ${id} to check the selectors match.`, true);
+    clearCustomForm();
+    loadPortals();
+  } catch (e) {
+    delete portalState.custom[id];
+    showCpMsg(e.message, false);
+  } finally { btn.disabled = false; }
+};
+
+function showCpMsg(text, ok) {
+  const box = $('#cp-msg');
+  box.className = 'msg ' + (ok ? 'ok' : 'bad');
+  box.textContent = text;
+  box.hidden = false;
+}
 
 function showPortalsMsg(text, ok) {
   const box = $('#portals-msg');

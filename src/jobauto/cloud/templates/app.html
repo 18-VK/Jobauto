@@ -231,7 +231,7 @@
     <div id="sched-msg" class="msg" hidden></div>
   </div>
 
-  <div class="prefblock">
+  <div class="filter-panel">
     <h3 class="section-h">Portals</h3>
     <p class="muted">
       Untick a portal and nothing runs against it — no search, no applications,
@@ -244,6 +244,54 @@
       <button class="btn btn-primary" id="btn-portals-save">Save portals</button>
     </div>
     <div id="portals-msg" class="msg" hidden></div>
+  </div>
+
+  <div class="filter-panel">
+    <h3 class="section-h">Add a portal</h3>
+    <p class="muted">
+      Any site with a search-results page. Selectors are CSS, and they have to
+      match the page as it looks <strong>signed in, after it finishes loading</strong>
+      — get them from <code>jobauto dump --portal &lt;id&gt;</code> on your PC,
+      not by guessing. The portal is saved with your preferences and appears in
+      the list above; sign in to it once with <code>jobauto login --portal &lt;id&gt;</code>.
+    </p>
+    <div class="quick-grid" id="custom-form">
+      <div><label>Id <span class="muted">(lowercase, e.g. foundit)</span></label>
+        <input id="cp-id" placeholder="foundit" /></div>
+      <div><label>Name</label><input id="cp-name" placeholder="Foundit" /></div>
+      <div><label>Site</label><input id="cp-base" placeholder="https://www.foundit.in" /></div>
+      <div><label>Login page</label><input id="cp-login" placeholder="https://www.foundit.in/login" /></div>
+      <div><label>Signed-in marker <span class="muted">(CSS)</span></label>
+        <input id="cp-marker" placeholder=".user-menu" /></div>
+      <div><label>Search URL <span class="muted">(tokens: {keywords} {location} {role_slug} {location_slug} {exp} {days} {page})</span></label>
+        <input id="cp-url" placeholder="https://www.foundit.in/srp/results?query={keywords}&amp;locations={location}" /></div>
+      <div><label>Results container <span class="muted">(CSS, optional)</span></label>
+        <input id="cp-container" placeholder=".srpResultCard" /></div>
+      <div><label>One result card <span class="muted">(CSS)</span></label>
+        <input id="cp-card" placeholder=".cardContainer" /></div>
+      <div><label>Title <span class="muted">(within the card)</span></label>
+        <input id="cp-title" placeholder=".jobTitle" /></div>
+      <div><label>Link <span class="muted">(an &lt;a&gt; within the card)</span></label>
+        <input id="cp-link" placeholder="a.jobTitle" /></div>
+      <div><label>Company</label><input id="cp-company" placeholder=".companyName" /></div>
+      <div><label>Location</label><input id="cp-location" placeholder=".details .location" /></div>
+      <div><label>Salary <span class="muted">(optional)</span></label><input id="cp-salary" /></div>
+      <div><label>Posted <span class="muted">(optional)</span></label><input id="cp-posted" /></div>
+      <div><label>Next-page button <span class="muted">(optional)</span></label><input id="cp-next" /></div>
+      <div><label>Pages to read</label><input id="cp-pages" type="number" min="1" max="10" value="3" /></div>
+      <div><label>Job description <span class="muted">(on the job page, optional)</span></label>
+        <input id="cp-jd" placeholder=".jobDescription" /></div>
+      <div><label>Apply button <span class="muted">(optional)</span></label>
+        <input id="cp-apply" placeholder="button.applyBtn" /></div>
+    </div>
+    <div class="prefhead">
+      <span class="muted" id="cp-note"></span>
+      <div>
+        <button class="btn btn-quiet" id="btn-cp-clear">Clear</button>
+        <button class="btn btn-primary" id="btn-cp-save">Save portal</button>
+      </div>
+    </div>
+    <div id="cp-msg" class="msg" hidden></div>
   </div>
 
   <div class="prefhead">

@@ -320,6 +320,21 @@ would reject the whole synced file. `doctor` says which of the two disabled a
 portal. `GET /api/portals` lists the shipped portal files (selectors only,
 nothing secret) with the current switch.
 
+## Custom portals from the dashboard
+
+`preferences.portals.custom.<id>` holds the same mapping a
+`config/portals/<id>.yaml` file does. `_materialise_custom_portals()` turns
+each into a `PortalConfig` at load, default adapter
+`jobauto.portals.generic:ConfigDrivenAdapter` -- so a portal added from the
+dashboard is YAML-only, reaches the PC through the existing preference sync,
+and never touches disk. It can only **add**: an id matching a shipped portal
+is refused on both sides (`_CUSTOM_ID`, `_CUSTOM_REQUIRED` are shared by
+`config.py` and the cloud validator). The cloud refuses a bad one at save
+time with a reason; the PC skips it and `doctor` says why, because a rejected
+sync would undo every other edit in the file. The dashboard keeps one
+`portals:` block (`disabled` + `custom`) in `portalState` and re-serialises
+it whole on every save, so the two forms cannot drop each other's data.
+
 ## Config layering
 
 `config/<name>.local.yaml` overrides `config/<name>.yaml` when present.

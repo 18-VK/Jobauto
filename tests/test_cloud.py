@@ -1359,3 +1359,62 @@ def test_portals_endpoint_requires_a_browser_session(client):
     signup(client)
     client.get("/logout")
     assert client.get("/api/portals").status_code == 401
+
+
+def _prefs_with(client, extra_yaml):
+    prefs = client.get("/api/preferences").get_json()["yaml"]
+    return client.post("/api/preferences", json={"yaml": prefs + extra_yaml})
+
+
+_CUSTOM_YAML = """
+portals:
+  custom:
+    foundit:
+      name: "Foundit"
+      base_url: "https://www.foundit.in"
+      search:
+        url_template: "https://www.foundit.in/srp?q={keywords}"
+        result_card: ".card"
+        fields:
+          title: ".t"
+          url: {selector: "a", attr: "href"}
+"""
+
+
+def test_a_custom_portal_is_accepted_and_listed(client):
+    signup(client)
+    assert _prefs_with(client, _CUSTOM_YAML).status_code == 200
+    by_id = {p["id"]: p for p in client.get("/api/portals").get_json()["portals"]}
+    assert by_id["foundit"]["custom"] is True
+    assert by_id["foundit"]["enabled"] is True
+    assert by_id["foundit"]["definition"]["search"]["result_card"] == ".card"
+    assert by_id["naukri"]["custom"] is False
+
+
+def test_a_custom_portal_missing_its_selectors_is_refused_with_a_reason(client):
+    signup(client)
+    res = _prefs_with(client, """
+portals:
+  custom:
+    foundit:
+      name: "Foundit"
+      base_url: "https://www.foundit.in"
+""")
+    assert res.status_code == 400
+    assert "foundit is missing" in res.get_json()["error"]
+    assert "search.result_card" in res.get_json()["error"]
+
+
+def test_a_custom_portal_may_not_take_a_shipped_id(client):
+    signup(client)
+    res = _prefs_with(client, _CUSTOM_YAML.replace("foundit:", "naukri:"))
+    assert res.status_code == 400
+    assert "already ships" in res.get_json()["error"]
+
+
+def test_a_custom_portal_reaches_the_agent(client):
+    signup(client)
+    tok = agent_token(client)
+    _prefs_with(client, _CUSTOM_YAML)
+    synced = client.get("/api/agent/preferences", headers=H(tok)).get_json()["yaml"]
+    assert yaml.safe_load(synced)["portals"]["custom"]["foundit"]["name"] == "Foundit"

@@ -282,3 +282,86 @@ def test_shipped_defaults_load_with_a_disabled_portal(tmp_path, monkeypatch):
     ids = {p.id for p in cfg.enabled_portals()}
     assert "indeed" not in ids and "hirist" not in ids
     assert "naukri" in ids
+
+
+# ---------------------------------------------- portals added by preference
+# A custom portal is the same mapping a config/portals/<id>.yaml holds, keyed
+# by id under preferences.portals.custom -- so adding one from the dashboard
+# reaches the PC through the sync that already exists.
+def _custom(**over) -> dict:
+    base = {
+        "name": "Foundit", "base_url": "https://www.foundit.in",
+        "auth": {"login_url": "https://www.foundit.in/login"},
+        "search": {"url_template": "https://www.foundit.in/srp?q={keywords}",
+                   "result_card": ".card",
+                   "fields": {"title": ".t", "url": {"selector": "a", "attr": "href"}}},
+    }
+    base.update(over)
+    return base
+
+
+def test_a_custom_portal_becomes_a_portal():
+    cfg = _two_portal_config()
+    cfg.preferences["portals"] = {"custom": {"foundit": _custom()}}
+    apply_portal_preferences(cfg)
+    p = cfg.portals["foundit"]
+    assert p.enabled and p.name == "Foundit"
+    assert p.adapter == "jobauto.portals.generic:ConfigDrivenAdapter"
+    assert p.search["result_card"] == ".card"
+    assert cfg.custom_portal_problems == []
+
+
+def test_a_custom_portal_resolves_to_a_working_adapter():
+    """No Python needed: the generic adapter reads everything from the
+    mapping, which is the whole reason adding a portal is cheap."""
+    from jobauto.portals import registry
+    cfg = _two_portal_config()
+    cfg.preferences["portals"] = {"custom": {"foundit": _custom()}}
+    apply_portal_preferences(cfg)
+    assert "BROKEN" not in registry.available(cfg)["foundit"]
+
+
+def test_a_custom_portal_can_be_switched_off_like_any_other():
+    cfg = _two_portal_config()
+    cfg.preferences["portals"] = {"custom": {"foundit": _custom()},
+                                  "disabled": ["foundit"]}
+    apply_portal_preferences(cfg)
+    assert not cfg.portals["foundit"].enabled
+
+
+def test_a_custom_portal_cannot_replace_a_shipped_one():
+    """Nothing typed into a dashboard may quietly become Naukri."""
+    cfg = _two_portal_config()
+    cfg.preferences["portals"] = {"custom": {"naukri": _custom(name="Fake")}}
+    apply_portal_preferences(cfg)
+    assert cfg.portals["naukri"].name == "Naukri"
+    assert any("already ships" in p for p in cfg.custom_portal_problems)
+
+
+@pytest.mark.parametrize("bad, expect", [
+    ({"foundit": "not a mapping"}, "must be a mapping"),
+    ({"Found It!": _custom()}, "id must be"),
+    ({"foundit": _custom(search={"result_card": ".c"})}, "missing"),
+    ({"foundit": _custom(base_url="foundit.in")}, "must be a URL"),
+])
+def test_a_bad_custom_portal_is_skipped_with_a_reason_not_fatal(bad, expect):
+    """The cloud validated the file; a rejected sync would undo every other
+    edit in it. Skip the one entry and let doctor say why."""
+    cfg = _two_portal_config()
+    cfg.preferences["portals"] = {"custom": bad}
+    apply_portal_preferences(cfg)
+    validate(cfg)
+    assert "foundit" not in cfg.portals
+    assert any(expect in p for p in cfg.custom_portal_problems)
+
+
+def test_doctor_lists_a_skipped_custom_portal(capsys, monkeypatch, tmp_path):
+    import argparse
+    from jobauto import cli
+    cfg = _two_portal_config()
+    cfg.preferences["portals"] = {"custom": {"foundit": "junk"}}
+    apply_portal_preferences(cfg)
+    monkeypatch.setattr(cli, "_load", lambda: cfg)
+    monkeypatch.setenv("JOBAUTO_DATA_DIR", str(tmp_path))
+    cli.cmd_doctor(argparse.Namespace(clear_cooldown=""))
+    assert "custom portal skipped" in capsys.readouterr().out

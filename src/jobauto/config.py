@@ -6,6 +6,7 @@ weight should not surface as a mysterious ranking three hundred jobs later.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,10 @@ class Config:
     # their own YAML. Kept apart so `doctor` can say which, and so pausing
     # every portal from the dashboard is a state rather than a config error.
     disabled_by_preferences: set[str] = field(default_factory=set)
+    # Custom portals from preferences.portals.custom that could not be used,
+    # and why. Skipped rather than fatal: the cloud validated the file, and a
+    # rejected sync would undo every other edit in it. `doctor` prints these.
+    custom_portal_problems: list[str] = field(default_factory=list)
 
     # -- convenience accessors so call sites don't dig through raw dicts ----
     @property
@@ -180,18 +185,95 @@ def load_config(config_dir: Path | None = None) -> Config:
     return cfg
 
 
-def apply_portal_preferences(cfg: Config) -> None:
-    """Switch off the portals named in preferences.portals.disabled.
+# What a custom portal must carry before it can search anything. Everything
+# else in a portal file is optional or has a working default.
+_CUSTOM_REQUIRED = (
+    ("name",), ("base_url",),
+    ("search", "url_template"), ("search", "result_card"),
+    ("search", "fields", "title"), ("search", "fields", "url"),
+)
+_CUSTOM_ID = re.compile(r"^[a-z][a-z0-9_-]{1,30}$")
+DEFAULT_CUSTOM_ADAPTER = "jobauto.portals.generic:ConfigDrivenAdapter"
 
-    Preferences are what the cloud syncs, so this is how a portal turned off
-    in the dashboard stays off on the PC. The portal's own YAML `enabled:`
-    still applies; this can only turn portals off, never on, so a portal
-    disabled in its file for a reason cannot be re-enabled from a phone.
-    Unknown ids are ignored: the dashboard may name a portal this checkout
-    does not have.
+
+def _dig(data: Any, path: tuple[str, ...]) -> Any:
+    for key in path:
+        if not isinstance(data, dict):
+            return None
+        data = data.get(key)
+    return data
+
+
+def _materialise_custom_portals(cfg: Config, block: dict[str, Any]) -> None:
+    """Turn preferences.portals.custom into portals, as if each were a file.
+
+    A custom portal is the same mapping a config/portals/<id>.yaml holds,
+    keyed by id. It only ever adds: an id matching a shipped portal is refused,
+    so nothing typed into a dashboard can quietly replace Naukri. The default
+    adapter is the generic one -- selectors in YAML, no Python -- which is
+    the whole reason adding a portal is cheap.
+    """
+    custom = block.get("custom")
+    if not isinstance(custom, dict):
+        return
+    for raw_id, data in custom.items():
+        pid = str(raw_id).strip().lower()
+        if not _CUSTOM_ID.match(pid):
+            cfg.custom_portal_problems.append(
+                f"{raw_id!r}: id must be lowercase letters, digits, - or _")
+            continue
+        if pid in cfg.portals:
+            cfg.custom_portal_problems.append(
+                f"{pid}: a portal with this id already ships; custom portals "
+                f"can only add, not replace")
+            continue
+        if not isinstance(data, dict):
+            cfg.custom_portal_problems.append(f"{pid}: must be a mapping")
+            continue
+        missing = [".".join(path) for path in _CUSTOM_REQUIRED
+                   if not _dig(data, path)]
+        if missing:
+            cfg.custom_portal_problems.append(
+                f"{pid}: missing {', '.join(missing)}")
+            continue
+        if not str(data.get("base_url", "")).startswith(("http://", "https://")):
+            cfg.custom_portal_problems.append(f"{pid}: base_url must be a URL")
+            continue
+        cfg.portals[pid] = PortalConfig(
+            id=pid,
+            name=str(data.get("name") or pid),
+            enabled=bool(data.get("enabled", True)),
+            base_url=str(data["base_url"]),
+            adapter=str(data.get("adapter") or DEFAULT_CUSTOM_ADAPTER),
+            auth=data.get("auth") or {},
+            search=data.get("search") or {},
+            detail=data.get("detail") or {},
+            apply=data.get("apply") or {},
+            risk=data.get("risk") or {},
+            profile_refresh=data.get("profile_refresh") or {},
+            mode=str(data.get("mode") or "search"),
+            raw={**data, "id": pid, "custom": True},
+        )
+
+
+def apply_portal_preferences(cfg: Config) -> None:
+    """Apply preferences.portals: add custom portals, then switch off the
+    ones in `disabled`.
+
+    Preferences are what the cloud syncs, so this is how both a portal added
+    in the dashboard and one turned off there reach the PC. The portal's own
+    YAML `enabled:` still applies; `disabled` can only turn portals off, never
+    on, so a portal disabled in its file for a reason cannot be re-enabled
+    from a phone. Unknown ids are ignored: the dashboard may name a portal
+    this checkout does not have. Custom portals are added first so they can
+    be switched off like any other.
     """
     block = cfg.preferences.get("portals") or {}
-    names = block.get("disabled") if isinstance(block, dict) else None
+    if not isinstance(block, dict):
+        return
+    _materialise_custom_portals(cfg, block)
+
+    names = block.get("disabled")
     if not isinstance(names, list):
         return
     for name in names:

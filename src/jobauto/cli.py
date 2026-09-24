@@ -79,6 +79,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         mark = "x" if "BROKEN" in desc else ("-" if "disabled" in desc else "+")
         print(f"    [{mark}] {pid:<12} {desc}")
 
+    for problem in cfg.custom_portal_problems:
+        print(f"    [x] custom portal skipped -- {problem}")
+
     print("\n  roles configured:")
     for role in cfg.search.get("roles", []):
         aliases = ", ".join(role.get("aliases") or [])

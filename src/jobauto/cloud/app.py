@@ -516,7 +516,19 @@ def create_app() -> Flask:
                 data = {}
             pid = str(data.get("id") or path.stem)
             out.append({"id": pid, "name": data.get("name", pid),
-                        "enabled": pid not in disabled})
+                        "enabled": pid not in disabled, "custom": False})
+
+        # Custom portals ride along with their full definition, so the
+        # dashboard can edit one in place and re-serialise the block whole.
+        custom = block.get("custom") if isinstance(block, dict) else None
+        if isinstance(custom, dict):
+            for raw_id, data in custom.items():
+                pid = str(raw_id).strip().lower()
+                if not isinstance(data, dict):
+                    continue
+                out.append({"id": pid, "name": data.get("name", pid),
+                            "enabled": pid not in disabled, "custom": True,
+                            "definition": data})
         return jsonify({"portals": out})
 
     @app.post("/api/preferences")
@@ -1121,6 +1133,8 @@ def _validate_preferences(parsed: dict) -> str:
             problems.append("portals.disabled must be a list of portal ids")
         elif disabled and not all(isinstance(x, str) for x in disabled):
             problems.append("portals.disabled entries must be portal ids")
+        if isinstance(portals, dict) and portals.get("custom") is not None:
+            problems.extend(_validate_custom_portals(portals["custom"]))
 
     th = parsed.get("thresholds") or {}
     if th:
@@ -1131,6 +1145,43 @@ def _validate_preferences(parsed: dict) -> str:
             problems.append("thresholds must be numbers")
 
     return "; ".join(problems)
+
+
+def _shipped_portal_ids() -> set[str]:
+    from ..config import DEFAULTS_DIR
+    return {p.stem for p in (DEFAULTS_DIR / "portals").glob("*.yaml")}
+
+
+def _validate_custom_portals(custom: Any) -> list[str]:
+    """The same rules config.py applies when it materialises them, applied
+    here first -- so a bad portal is refused at save time with a reason,
+    rather than skipped silently on the PC."""
+    from ..config import _CUSTOM_ID, _CUSTOM_REQUIRED, _dig
+
+    if not isinstance(custom, dict):
+        return ["portals.custom must be a mapping of id -> portal definition"]
+    shipped = _shipped_portal_ids()
+    out: list[str] = []
+    for raw_id, data in custom.items():
+        pid = str(raw_id).strip().lower()
+        if not _CUSTOM_ID.match(pid):
+            out.append(f"portals.custom: {raw_id!r} is not a valid id "
+                       "(lowercase letters, digits, - or _)")
+            continue
+        if pid in shipped:
+            out.append(f"portals.custom.{pid}: that portal already ships; "
+                       "custom portals can only add, not replace")
+            continue
+        if not isinstance(data, dict):
+            out.append(f"portals.custom.{pid} must be a mapping")
+            continue
+        missing = [".".join(path) for path in _CUSTOM_REQUIRED
+                   if not _dig(data, path)]
+        if missing:
+            out.append(f"portals.custom.{pid} is missing {', '.join(missing)}")
+        if not str(data.get("base_url", "")).startswith(("http://", "https://")):
+            out.append(f"portals.custom.{pid}.base_url must start with http")
+    return out
 
 
 def _default_preferences_yaml() -> str:
