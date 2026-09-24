@@ -538,7 +538,7 @@ tasks still running.
 | `jobauto autostart --status` | Why is the dashboard showing offline? |
 | `jobauto dump --portal hirist` | Save a portal's real results page under `data/debug/` -- for fixing selectors when a search finds nothing |
 | *Preferences → Portals* (dashboard) | Switch any portal off; nothing runs against it until it is back on. Syncs to your PC as `portals.disabled` in preferences |
-| *Preferences → Add a portal* (dashboard) | Add any site with a search-results page: id, URLs and CSS selectors. Saved as `portals.custom.<id>` in preferences, synced to your PC, no Python needed. Get the selectors from `jobauto dump` |
+| *Preferences → Add a portal* (dashboard) | Add any site with a search-results page: id, URLs and CSS selectors. Saved as `portals.custom.<id>` in preferences, synced to your PC, no Python needed. Get the selectors from `jobauto dump` — step by step in [docs/ADDING-A-PORTAL.md](docs/ADDING-A-PORTAL.md) |
 | `jobauto cloud` | Run the hosted app locally, to try it |
 | `jobauto export-session` | Copy your portal logins to another machine |
 | `jobauto import-session --file F` | Restore logins exported elsewhere |

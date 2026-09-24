@@ -344,6 +344,7 @@ live session cookies, `data/debug/` holds signed-in page dumps.
 
 ## Docs
 
+`docs/ADDING-A-PORTAL.md` (the user-facing walkthrough),
 `docs/SCHEDULING.md` (the chain and autostart), `docs/RISKS.md`
 (anti-detection posture, cool-off), `docs/NEW-MACHINE.md`, `docs/DEPLOY.md`,
 `docs/DATABASE.md`, `docs/HOSTING.md`. The README is the user-facing setup
