@@ -72,12 +72,23 @@ class Recorder:
         self.peak = 0
         self.threads: set[int] = set()
         self.lock = threading.Lock()
+        # First call in, last call out: the span the fetches occupied, which
+        # excludes the scoring and SQLite writes that run serially in both
+        # modes and made a wall-clock comparison flaky on a busy disk.
+        self.first_start: float | None = None
+        self.last_end: float = 0.0
+
+    @property
+    def span(self) -> float:
+        return self.last_end - (self.first_start or 0.0)
 
     def __call__(self, portal, roles, headless):
         with self.lock:
             self.active += 1
             self.peak = max(self.peak, self.active)
             self.threads.add(threading.get_ident())
+            if self.first_start is None:
+                self.first_start = time.monotonic()
         try:
             time.sleep(self.delay)
             jobs = []
@@ -88,6 +99,8 @@ class Recorder:
                           description="C# .NET Core REST API")
                 job.posted_date = date.today()
                 jobs.append(job)
+            with self.lock:
+                self.last_end = max(self.last_end, time.monotonic())
             return portal.id, jobs, ""
         finally:
             with self.lock:
@@ -112,19 +125,19 @@ def test_parallel_is_actually_faster(db, monkeypatch):
     serial = Recorder(delay=0.2)
     p1 = Pipeline(config, db, log=lambda *_: None)
     monkeypatch.setattr(p1, "_search_portal", serial)
-    start = time.monotonic()
     p1.discover(parallel=False)
-    serial_time = time.monotonic() - start
 
     concurrent = Recorder(delay=0.2)
     p2 = Pipeline(config, db, log=lambda *_: None)
     monkeypatch.setattr(p2, "_search_portal", concurrent)
-    start = time.monotonic()
     p2.discover(parallel=True)
-    parallel_time = time.monotonic() - start
 
-    assert parallel_time < serial_time / 2
+    # The fetches overlapped: five 0.2s sleeps in series take a second, in
+    # parallel a fraction of that. Measured on the calls themselves, not on
+    # discover() as a whole, whose serial ingest was drowning the signal.
     assert serial.peak == 1
+    assert concurrent.peak >= 2
+    assert concurrent.span < serial.span / 2
 
 
 def test_concurrency_is_capped(db, monkeypatch):
