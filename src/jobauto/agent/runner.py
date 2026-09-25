@@ -447,63 +447,88 @@ class LocalAgent:
                                "cards": 0, "notes": [], "error": "",
                                "checks": {"search_page": "", "login_page": ""}}
         checks = out["checks"]
-        try:
-            with browser_mod.session(stub, cfg, headless=self.headless) as page:
-                page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                # Results are drawn after load on every board there is.
-                page.wait_for_timeout(5000)
-                html = page.content()
-                landed = str(page.url or "")
 
-                if any(k in landed.lower() for k in self._LOGIN_URL_MARKERS):
-                    checks["search_page"] = "needs sign-in"
-                    checks["login_page"] = "found: " + landed
-                    out["login_url"] = landed
-                    out["error"] = (f"the site wants you signed in before it "
-                                    f"shows results. On this PC run: jobauto "
-                                    f"login --portal {pid}, then Try again")
-                    return out
-
-                det = detect_mod.detect(html)
-                if det is None:
-                    checks["search_page"] = "loaded, but no job list found"
-                    out["error"] = ("no repeating list of job links on that "
-                                    "page -- paste the address of the results "
-                                    "page itself, after searching, signed in")
-                else:
-                    checks["search_page"] = f"ok, {det.cards} jobs"
-                    out["search"] = det.to_search()
-                    out["cards"] = det.cards
-                    out["notes"] = list(det.notes)
-
-                # The login page: the one given, else the first sign-in link
-                # on the search page. Reached once, so a wrong address is
-                # reported here rather than discovered at `login` time.
-                candidate = login_hint
-                if not candidate:
-                    found = self._LOGIN_LINK.search(html)
-                    if found:
-                        candidate = found.group(1)
-                        if candidate.startswith("/"):
-                            candidate = origin + candidate
-                if candidate and candidate.startswith("http"):
-                    try:
-                        resp = page.goto(candidate, wait_until="domcontentloaded",
-                                         timeout=30000)
-                        ok = resp is None or getattr(resp, "ok", True)
-                        checks["login_page"] = ("ok" if ok else
-                                                f"returned {getattr(resp, 'status', '?')}")
-                        if ok:
-                            out["login_url"] = candidate
-                    except Exception as exc:
-                        checks["login_page"] = f"unreachable: {type(exc).__name__}"
-                else:
-                    checks["login_page"] = ("not found on the page -- sign in "
-                                            "by hand once if the site needs it")
-        except Exception as exc:
-            checks["search_page"] = checks["search_page"] or "unreachable"
-            out["error"] = f"could not open the page: {type(exc).__name__}: {exc}"[:240]
+        # First look, cold. Most boards show results to anyone.
+        look = self._look_at(stub, cfg, url, detect_mod)
+        self._save_debug_page(pid, look)
+        if look["error"]:
+            checks["search_page"] = "unreachable"
+            out["error"] = look["error"]
             return out
+
+        # Work out where the sign-in page is, from what the user gave or the
+        # first sign-in link on the page. Needed both to check it and to open
+        # it if the site turns out to want a session.
+        login_url = login_hint
+        if look["kind"] == "login":
+            login_url = look["landed"]
+        elif not login_url:
+            found = self._LOGIN_LINK.search(look["html"])
+            if found:
+                login_url = found.group(1)
+                if login_url.startswith("/"):
+                    login_url = origin + login_url
+
+        # No job list, and the page is neither a bot check nor a redirect: the
+        # site may simply keep results behind a session without saying so.
+        # Foundit does. The user asked for the obvious thing -- sign in
+        # first, then look -- so when this agent has a screen to open a
+        # window on, do exactly that in this portal's own profile, wait for
+        # the window to be closed, and look again with the session it kept.
+        if look["kind"] in ("empty", "login") and not self.headless \
+                and login_url.startswith("http"):
+            self._say_status(f"sign in to {name} in the window on this PC, "
+                             f"then close it")
+            self.log(f"    opening {name}'s sign-in page -- sign in there and "
+                     f"close the window")
+            outcome = self._wait_for_signin(stub, cfg, login_url)
+            checks["login_page"] = f"ok, sign-in window {outcome}"
+            self._say_status("idle")
+            second = self._look_at(stub, cfg, url, detect_mod)
+            self._save_debug_page(pid, second)
+            if second["det"] is not None:
+                look = second
+                out["notes"].append("results appeared only after signing in")
+            elif look["kind"] == "login":
+                look = second
+
+        kind, det = look["kind"], look["det"]
+        if det is not None:
+            checks["search_page"] = f"ok, {det.cards} jobs"
+            out["search"] = det.to_search()
+            out["cards"] = det.cards
+            out["notes"].extend(det.notes)
+        elif kind == "challenge":
+            checks["search_page"] = "bot check"
+            out["error"] = (f"{name} served a bot check instead of results, "
+                            f"the same wall Indeed puts up. It cannot be read "
+                            f"by automation; remove it")
+        elif kind == "login":
+            checks["search_page"] = "needs sign-in"
+            out["login_url"] = look["landed"]
+            out["error"] = (f"the site wants you signed in before it shows "
+                            f"results. On this PC run: jobauto login --portal "
+                            f"{pid}, then Try again")
+        else:
+            checks["search_page"] = "loaded, but no job list found"
+            out["error"] = (f"no repeating list of job links on that page, "
+                            f"even after a sign-in window. The page as seen is "
+                            f"saved at data/debug/{pid}.html on this PC -- "
+                            f"paste the address of the results page itself, "
+                            f"after searching")
+
+        # The sign-in page is reached once, so a wrong address is reported
+        # here rather than discovered at `login` time.
+        if not checks["login_page"]:
+            if login_url.startswith("http"):
+                checks["login_page"] = self._probe(stub, cfg, login_url)
+                if checks["login_page"] == "ok":
+                    out["login_url"] = login_url
+            else:
+                checks["login_page"] = ("not found on the page -- sign in by "
+                                        "hand once if the site needs it")
+        elif login_url.startswith("http") and "login_url" not in out:
+            out["login_url"] = login_url
 
         if out["cards"] and not placed:
             out["notes"].append(
@@ -511,6 +536,94 @@ class LocalAgent:
                 f"as-is. To search other roles, run a search on the site for "
                 f"'{role}' in '{location}' and paste that URL instead")
         return out
+
+    # How long to give a results page to draw its list, polling as it goes.
+    # A board that has not drawn anything in this long is not going to.
+    DETECT_WAIT_SECONDS = 15
+    # How long a sign-in window stays open before detection moves on. The
+    # session persists as the user goes, so a timeout is not a failure.
+    SIGNIN_WAIT_MINUTES = 5.0
+
+    def _look_at(self, stub: Any, cfg: Config, url: str, detect_mod: Any) -> dict:
+        """Open the URL and classify what came back.
+
+        kind is one of: jobs (det set), challenge, login, empty. Polls for
+        the list rather than sleeping a fixed time, because a slow board and
+        a page with nothing on it look the same at five seconds and quite
+        different at fifteen.
+        """
+        from ..portals.base import PortalAdapter
+
+        look: dict[str, Any] = {"kind": "empty", "det": None, "html": "",
+                                "landed": "", "title": "", "error": ""}
+        try:
+            with browser_mod.session(stub, cfg, headless=self.headless) as page:
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                deadline = time.monotonic() + self.DETECT_WAIT_SECONDS
+                while True:
+                    page.wait_for_timeout(1500)
+                    look["html"] = page.content()
+                    look["det"] = detect_mod.detect(look["html"])
+                    if look["det"] is not None or time.monotonic() > deadline:
+                        break
+                look["landed"] = str(page.url or "")
+                try:
+                    look["title"] = str(page.title() or "")
+                except Exception:
+                    pass
+        except Exception as exc:
+            look["error"] = f"could not open the page: {type(exc).__name__}: {exc}"[:240]
+            return look
+
+        landed, title = look["landed"].lower(), look["title"].lower()
+        if look["det"] is not None:
+            look["kind"] = "jobs"
+        elif (any(k in landed for k in PortalAdapter._CHALLENGE_URL_MARKERS)
+              or any(k in title for k in PortalAdapter._CHALLENGE_TITLE_MARKERS)):
+            look["kind"] = "challenge"
+        elif any(k in landed for k in self._LOGIN_URL_MARKERS):
+            look["kind"] = "login"
+        return look
+
+    def _wait_for_signin(self, stub: Any, cfg: Config, login_url: str) -> str:
+        """Open the sign-in page in the portal's own profile and wait for the
+        user to finish and close the window. Cookies persist as they go."""
+        try:
+            with browser_mod.session(stub, cfg, headless=False) as page:
+                page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
+                return browser_mod.wait_for_login(page, "", self.SIGNIN_WAIT_MINUTES)
+        except Exception as exc:
+            return f"could not open: {type(exc).__name__}"
+
+    def _probe(self, stub: Any, cfg: Config, url: str) -> str:
+        try:
+            with browser_mod.session(stub, cfg, headless=self.headless) as page:
+                resp = page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                ok = resp is None or getattr(resp, "ok", True)
+                return "ok" if ok else f"returned {getattr(resp, 'status', '?')}"
+        except Exception as exc:
+            return f"unreachable: {type(exc).__name__}"
+
+    def _save_debug_page(self, pid: str, look: dict) -> None:
+        """What detection saw, kept where `dump` keeps its pages, so a miss
+        can be looked at instead of guessed about."""
+        if not look.get("html"):
+            return
+        try:
+            from ..config import data_dir
+            out = data_dir() / "debug"
+            out.mkdir(parents=True, exist_ok=True)
+            (out / f"{pid}.html").write_text(look["html"], encoding="utf-8")
+        except Exception:
+            pass
+
+    def _say_status(self, text: str) -> None:
+        """Put a line under the online dot, so a sign-in window waiting on the
+        PC is visible from the phone that added the portal."""
+        try:
+            self.cloud.hello(text[:120])
+        except Exception:
+            pass
 
     def tick(self) -> None:
         self.sync_preferences()

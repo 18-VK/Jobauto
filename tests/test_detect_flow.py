@@ -191,6 +191,11 @@ def _agent_with(monkeypatch, html, landed_url):
         yield _Page(html, landed_url)
 
     monkeypatch.setattr(runner.browser_mod, "session", fake_session)
+    # The fake page's wait_for_timeout returns at once, so the polling loop
+    # would spin for the full window on a page with no jobs.
+    monkeypatch.setattr(runner.LocalAgent, "DETECT_WAIT_SECONDS", 0)
+    monkeypatch.setattr(runner.browser_mod, "wait_for_login",
+                        lambda page, marker, minutes: "closed")
     cloud = _Cloud()
     return runner.LocalAgent(cloud, interval=1, log=lambda *_: None), cloud
 
