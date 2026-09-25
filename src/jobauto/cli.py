@@ -231,10 +231,22 @@ def cmd_import_session(args: argparse.Namespace) -> int:
     return 0
 
 
+def _attach_login_window(pipe: Pipeline, cfg: Config,
+                         args: argparse.Namespace) -> None:
+    """Someone running this from a terminal is at the PC: when a portal's
+    session has expired, open its sign-in page rather than telling them to
+    come back and run `login`. Headless has no window to open."""
+    if getattr(args, "headless", False):
+        return
+    from .browser import interactive_login
+    pipe.login_hook = lambda portal: interactive_login(portal, cfg, minutes=4.0)
+
+
 def cmd_discover(args: argparse.Namespace) -> int:
     cfg = _load()
     db = Database()
     pipe = Pipeline(cfg, db)
+    _attach_login_window(pipe, cfg, args)
     run_id = db.start_run("discover", args.portal or
                           [p.id for p in cfg.enabled_portals()])
     try:
@@ -443,6 +455,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
     db = Database()
     pipe = Pipeline(cfg, db)
+    _attach_login_window(pipe, cfg, args)
     run_id = db.start_run("apply", args.portal or
                           [p.id for p in cfg.enabled_portals()])
     try:

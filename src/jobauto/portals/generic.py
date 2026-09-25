@@ -352,6 +352,11 @@ class ConfigDrivenAdapter(PortalAdapter):
 
     def _scrape_cards(self, cards: Any, count: int,
                       fields: dict[str, Any]) -> Iterator[Job]:
+        # A generic card selector -- one narrowed with :has(), or plain
+        # `li` -- also matches the list around the cards and boxes inside
+        # them, each of which resolves to the first job link it contains.
+        # Same job, several matches; keep the first.
+        seen: set[str] = set()
         for i in range(count):
             try:
                 card = cards.nth(i)
@@ -370,6 +375,9 @@ class ConfigDrivenAdapter(PortalAdapter):
                 url = values["url"]
                 if url.startswith("/"):
                     url = self.portal.base_url.rstrip("/") + url
+                if url in seen:
+                    continue
+                seen.add(url)
 
                 yield self.build_job(
                     portal_job_id=self._job_id_from_url(url),

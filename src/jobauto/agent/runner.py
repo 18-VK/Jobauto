@@ -286,6 +286,8 @@ class LocalAgent:
                     self.log(f"    could not sync mid-run: {type(exc).__name__}")
 
         pipe = Pipeline(config, db, log=capture)
+        if not self.headless:
+            pipe.login_hook = lambda portal: self._login_window(portal, config)
         try:
             if kind == "discover":
                 result = pipe.discover(portal_ids=payload.get("portals"),
@@ -724,6 +726,23 @@ class LocalAgent:
             (out / f"{pid}.html").write_text(look["html"], encoding="utf-8")
         except Exception:
             pass
+
+    # How long a sign-in window opened mid-run stays up. Long enough for an
+    # OTP; short enough that a scheduled run with nobody at the PC loses a
+    # few minutes on that portal, not the morning.
+    RUN_SIGNIN_MINUTES = 4.0
+
+    def _login_window(self, portal: Any, config: Config) -> bool:
+        """A portal's session expired mid-run. Open its sign-in page here,
+        tell the dashboard a window is waiting, and report whether the run
+        should try that portal again."""
+        self._say_status(f"sign in to {portal.name} in the window on this PC, "
+                         f"then close it")
+        try:
+            return bool(browser_mod.interactive_login(
+                portal, config, minutes=self.RUN_SIGNIN_MINUTES))
+        finally:
+            self._say_status("working")
 
     def _say_status(self, text: str) -> None:
         """Put a line under the online dot, so a sign-in window waiting on the

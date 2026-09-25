@@ -120,6 +120,33 @@ class Pipeline:
         # Workers log while they run, so the lines must not interleave
         # mid-sentence in the dashboard's live output.
         self._log_lock = threading.Lock()
+        # Set by a caller that has a screen: given a portal, open its sign-in
+        # page in a window, wait for the user, return whether to try again.
+        # None means "say what to run and move on", which is all a headless
+        # agent can do. Sessions expire; a run that stops every time one does
+        # is not automation, it is a reminder service.
+        self.login_hook: Callable[[Any], bool] | None = None
+        # One sign-in window at a time, however many portals want one.
+        self._login_lock = threading.Lock()
+        self._login_needed: set[str] = set()
+
+    def _ask_to_login(self, portal: Any) -> bool:
+        """Open the sign-in window for one portal and wait. True to retry."""
+        if self.login_hook is None:
+            return False
+        with self._login_lock:
+            self._say(portal.id, f"signed out -- opening {portal.name}'s sign-in "
+                                 f"page in a window on this PC. Sign in there "
+                                 f"and close the window")
+            try:
+                ok = bool(self.login_hook(portal))
+            except Exception as exc:
+                self._say(portal.id, f"could not open the sign-in window: "
+                                     f"{type(exc).__name__}: {exc}")
+                return False
+        self._say(portal.id, "trying again with the new session" if ok
+                  else "no sign-in happened; leaving this portal for now")
+        return ok
 
     def _say(self, portal_id: str, message: str) -> None:
         """Log a line tagged with the portal it came from.
@@ -132,7 +159,8 @@ class Pipeline:
 
     # ------------------------------------------------------------ discover
     def _search_portal(self, portal: Any, roles: list[dict],
-                       headless: bool) -> tuple[str, list[Job], str, bool]:
+                       headless: bool, retry: bool = True
+                       ) -> tuple[str, list[Job], str, bool]:
         """Fetch one portal's jobs. Returns (portal_id, jobs, note, challenged).
 
         Deliberately does no scoring and touches no database: this runs on a
@@ -143,6 +171,7 @@ class Pipeline:
         jobs: list[Job] = []
         note = ""
         challenged = False
+        needs_login = False
         self._say(portal.id, "opening browser")
         try:
             with session(portal, self.config, headless=headless) as page:
@@ -156,6 +185,7 @@ class Pipeline:
                             jobs.append(job)
                     except LoginRequired as exc:
                         note = str(exc)
+                        needs_login = True
                         self._say(portal.id, str(exc))
                         break
                     except VerificationRequired as exc:
@@ -200,6 +230,13 @@ class Pipeline:
             note = str(exc)
         except Exception as exc:
             note = f"unavailable: {type(exc).__name__}: {exc}"
+
+        # The session expired. With a screen, ask for a sign-in and search
+        # again -- once. Outside the `with`: two browsers on one profile
+        # directory corrupt it, so the search session must be closed before
+        # the sign-in window opens.
+        if needs_login and retry and self._ask_to_login(portal):
+            return self._search_portal(portal, roles, headless, retry=False)
         return portal.id, jobs, note, challenged
 
     def discover(self, portal_ids: list[str] | None = None,
@@ -377,22 +414,31 @@ class Pipeline:
                     done += 1
                 continue
 
-            try:
-                with session(portal, self.config, headless=headless) as page:
-                    adapter = registry.build(portal, self.config, page)
-                    batch = portal_rows[:budget]
-                    stop = self._apply_on_portal(
-                        adapter, batch, gate, results, queued=queued)
-                    # What was tried, not what was allowed. Charging the
-                    # whole budget to a portal that had two rows left the
-                    # rest of the batch to nobody.
-                    done += len(batch)
-                    if stop:
-                        return results
-            except RuntimeError as exc:
-                self.log(f"    {exc}")
-            except Exception as exc:
-                self.log(f"    {portal.name} unavailable: {type(exc).__name__}: {exc}")
+            batch = portal_rows[:budget]
+            # Twice at most: once cold, once more after a sign-in window if
+            # the session had expired. The second pass skips anything the
+            # first already prepared.
+            for attempt in (1, 2):
+                self._login_needed.discard(portal_id)
+                try:
+                    with session(portal, self.config, headless=headless) as page:
+                        adapter = registry.build(portal, self.config, page)
+                        stop = self._apply_on_portal(
+                            adapter, batch, gate, results, queued=queued)
+                        if stop:
+                            return results
+                except RuntimeError as exc:
+                    self.log(f"    {exc}")
+                except Exception as exc:
+                    self.log(f"    {portal.name} unavailable: {type(exc).__name__}: {exc}")
+                if (attempt == 1 and portal_id in self._login_needed
+                        and self._ask_to_login(portal)):
+                    continue
+                break
+            # What was tried, not what was allowed. Charging the whole
+            # budget to a portal that had two rows left the rest of the
+            # batch to nobody.
+            done += len(batch)
 
         return results
 
@@ -519,8 +565,10 @@ class Pipeline:
                 except LoginRequired as exc:
                     # Every remaining job on this portal would fail the same way,
                     # and hammering a logged-out session is exactly what looks
-                    # like a bot. Stop the portal and say what to run.
+                    # like a bot. Stop the portal; the caller may open a
+                    # sign-in window and try the batch once more.
                     self.log(f"    {exc}")
+                    self._login_needed.add(getattr(adapter, "id", "") or "")
                     return False
                 except Exception as exc:
                     self.db.record_application(job, AppStatus.FAILED,

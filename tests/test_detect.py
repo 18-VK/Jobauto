@@ -170,3 +170,46 @@ def test_definition_has_the_origin_as_base_url():
     assert out["search"]["url_template"].endswith("{keywords}")
     assert out["search"]["result_card"] == "div.job-card"
     assert out["auth"] == {"mode": "persistent_profile"}
+
+
+# ---------------------------------------------- minted names, more shapes
+def test_material_ui_style_hashes_are_never_used():
+    """Hirist is a MUI app. The first pass kept `mui-style-1yuhvjn` as the
+    card selector -- right for a week, dead on the next deploy."""
+    html = _page(card_cls="MuiBox-root mui-style-1yuhvjn")
+    det = d.detect(html)
+    assert det is not None
+    assert "mui-style" not in det.result_card
+    assert "1yuhvjn" not in det.result_card
+
+
+def test_css_modules_suffixes_are_never_used():
+    html = _page(card_cls="jobCard card__x7f3ab")
+    det = d.detect(html)
+    assert det.result_card == "div.jobCard"
+
+
+def test_a_generic_class_is_narrowed_to_the_boxes_that_hold_a_title():
+    """`div.MuiBox-root` matches every box on the page, not the six cards.
+    :has(title) keeps it to the ones that are cards -- plus their
+    ancestors, which the scraper de-duplicates."""
+    html = _page(card_cls="MuiBox-root mui-style-1yuhvjn").replace(
+        '<div class="meta">', '<div class="MuiBox-root mui-style-9zzz1">')
+    det = d.detect(html)
+    assert det.result_card == "div.MuiBox-root:has(a.job-title)"
+
+
+def test_a_test_id_beats_any_class():
+    """Put there for tests to find things by: stable by intent."""
+    html = _page(card_cls="MuiBox-root mui-style-1yuhvjn").replace(
+        'class="MuiBox-root mui-style-1yuhvjn"',
+        'class="MuiBox-root mui-style-1yuhvjn" data-testid="job-card"')
+    det = d.detect(html)
+    assert det.result_card == 'div[data-testid="job-card"]'
+
+
+def test_a_listitem_role_is_a_usable_card_selector():
+    html = _page(card_cls="mui-style-1yuhvjn").replace(
+        'class="mui-style-1yuhvjn"', 'class="mui-style-1yuhvjn" role="listitem"')
+    det = d.detect(html)
+    assert det.result_card == 'div[role="listitem"]'

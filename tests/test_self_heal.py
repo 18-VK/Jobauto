@@ -187,3 +187,27 @@ def test_the_pipeline_logs_the_adapter_notes(monkeypatch, tmp_path):
     finally:
         db.close()
     assert any("detected selectors" in line for line in lines)
+
+
+def test_a_card_selector_that_also_matches_the_list_yields_each_job_once():
+    """`div.MuiBox-root:has(a.job-title)` matches the six cards, the box
+    around them, and a box inside each. Every extra match resolves to a job
+    already seen; each job comes out once."""
+    class _Wide(_Loc):
+        def count(self):
+            return 8 if self.sel == CARD else super().count()
+
+        def nth(self, i):
+            # matches 6 and 7 are the wrapper and an inner box: same first job
+            return _Loc(self.page, self.sel, i if i < 6 else 0)
+
+    class _WidePage(_Page):
+        def locator(self, sel):
+            return _Wide(self, sel)
+
+    page = _WidePage()
+    adapter = _adapter(page)
+    adapter.last_url = page.url
+    jobs = list(adapter._scrape_page())
+    assert len(jobs) == 6
+    assert len({j.url for j in jobs}) == 6
