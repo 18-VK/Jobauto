@@ -249,17 +249,15 @@
   <div class="filter-panel">
     <h3 class="section-h">Add a portal</h3>
     <p class="muted">
-      Two things: a name, and the address of a search you just ran on the site
-      — for your first role and city, so the search terms can be recognised.
-      Your PC opens that page on its next poll, works out where the jobs are,
-      and reports back here. Sign in to the site first with
-      <code>jobauto login --portal &lt;id&gt;</code> if it needs an account
-      to show results.
+      A name and the site's address — the front page is enough. On its next
+      poll your PC opens it, asks you to sign in if the site needs that (a
+      window opens on the PC), finds the search box, searches for your first
+      role and city, and reports back here what it found.
     </p>
     <div class="quick-grid">
       <div><label>Name</label><input id="qa-name" placeholder="Foundit" /></div>
-      <div><label>Search results address</label>
-        <input id="qa-url" placeholder="https://www.foundit.in/srp/results?query=qa+automation&amp;locations=Delhi" /></div>
+      <div><label>Site address</label>
+        <input id="qa-url" placeholder="https://www.foundit.in/" /></div>
     </div>
     <div class="prefhead">
       <span class="muted" id="qa-note"></span>

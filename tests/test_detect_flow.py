@@ -296,7 +296,9 @@ def test_the_pc_reports_whether_search_and_login_pages_work(monkeypatch, tmp_pat
     agent.detect_pending_portals(_cfg_with_pending())
     _, payload = cloud.reported[0]
     assert payload["checks"]["search_page"].startswith("ok, 6 jobs")
-    assert payload["checks"]["login_page"] == "ok"
+    # The page shows jobs but also a sign-in link, so under sign-in-first a
+    # window is opened before the second look; either way the page was ok.
+    assert payload["checks"]["login_page"].startswith("ok")
     assert payload["login_url"] == "https://www.foundit.in/candidate/login"
 
 

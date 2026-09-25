@@ -327,6 +327,186 @@ def detect(html: str) -> Detection | None:
     return det
 
 
+# ---------------------------------------------------- finding the way in
+# Given only a site's front door, the app has to do what a person does on a
+# board they have never seen: notice whether they are signed in, find the
+# search box, type a role and a city, and read the page that comes back.
+# The three functions below are the noticing; the agent does the typing.
+
+_KEYWORD_HINTS = ("keyword", "skill", "designation", "title", "role", "job",
+                  "search", "query", "what", "term", "position", "profile")
+_KEYWORD_NAMES = {"q", "k", "kw", "key", "keyword", "keywords", "query", "what",
+                  "search", "s", "job", "jobs", "txt", "text"}
+_LOCATION_HINTS = ("location", "city", "where", "place", "region", "area",
+                   "locality")
+_LOCATION_NAMES = {"l", "loc", "location", "locations", "where", "city", "cities",
+                   "place"}
+_NOT_A_SEARCH_INPUT = {"hidden", "password", "email", "checkbox", "radio",
+                       "submit", "button", "file", "tel", "number", "date"}
+_SUBMIT_WORDS = ("search", "find", "go", "submit", "show")
+
+_LOGIN_HREF = re.compile(r"(login|signin|sign-in|log-in|/auth\b)", re.IGNORECASE)
+_SIGNED_IN_MARK = re.compile(
+    r"(logout|log-out|signout|sign-out|/my-?profile|/my-?account|/candidate/(?:home|dashboard|profile)|"
+    r">\s*(?:log\s?out|sign\s?out|my profile|my account)\s*<)", re.IGNORECASE)
+_NOT_A_JOBS_LINK = ("login", "signin", "employer", "recruiter", "post-a-job",
+                    "post-job", "hire", "pricing", "blog", "career-advice")
+
+
+@dataclass
+class SearchForm:
+    keyword: str
+    location: str = ""
+    submit: str = ""          # empty: press Enter in the keyword box
+
+
+def _hint_score(el: _El, hints: tuple[str, ...], names: set[str]) -> int:
+    attrs = el.attrs
+    name = (attrs.get("name") or "").strip().lower()
+    ident = (attrs.get("id") or "").strip().lower()
+    if name in names or ident in names:
+        return 3
+    blob = " ".join(attrs.get(k, "") for k in
+                    ("name", "id", "placeholder", "aria-label", "class", "title")).lower()
+    return sum(1 for h in hints if h in blob)
+
+
+def _input_selector(el: _El) -> str:
+    ident = el.attrs.get("id", "")
+    if ident and _STABLE_CLASS.match(ident) and not _MINTED.search(ident):
+        return f"#{ident}"
+    for attr in ("name", "placeholder", "aria-label"):
+        value = el.attrs.get(attr, "")
+        if value and '"' not in value:
+            return f'{el.tag}[{attr}="{value}"]'
+    kind = el.attrs.get("type", "")
+    return f'{el.tag}[type="{kind}"]' if kind else el.tag
+
+
+def _text_inputs(scope: _El) -> list[_El]:
+    out = []
+    for el in scope.walk():
+        if el.tag not in ("input", "textarea"):
+            continue
+        if (el.attrs.get("type") or "text").lower() in _NOT_A_SEARCH_INPUT:
+            continue
+        out.append(el)
+    return out
+
+
+def _submit_selector(scope: _El) -> str:
+    for el in scope.walk():
+        if el.tag == "button" and (el.attrs.get("type") or "").lower() == "submit":
+            return _input_selector(el) if el.attrs.get("id") else 'button[type="submit"]'
+        if el.tag == "input" and (el.attrs.get("type") or "").lower() == "submit":
+            return 'input[type="submit"]'
+    # A <button> with no type attribute submits its form too, but the CSS
+    # button[type="submit"] does not match it -- there is no attribute to
+    # match. Reach it by what it says instead.
+    for el in scope.walk():
+        if el.tag in ("button", "a"):
+            label = (el.text() or el.attrs.get("aria-label", "")).strip()
+            if label and any(w == label.lower() or w in label.lower().split()
+                             for w in _SUBMIT_WORDS) and '"' not in label:
+                return f'{el.tag}:has-text("{label}")'
+    return ""
+
+
+def find_search_form(html: str) -> SearchForm | None:
+    """The site's job-search box: a text input that means "keyword", with an
+    optional one that means "location", and how to submit them.
+
+    Forms first, because a real <form> keeps the two inputs together. A
+    board built as an app often has no form at all, so the page as a whole
+    is the last candidate. A form holding a password field is a login form,
+    whatever its other inputs are called.
+    """
+    root = _parse(html)
+    scopes = [f for f in root.walk() if f.tag == "form"] + [root]
+    best: tuple[int, SearchForm] | None = None
+    for scope in scopes:
+        inputs = _text_inputs(scope)
+        if not inputs or any((i.attrs.get("type") or "").lower() == "password"
+                             for i in scope.walk() if i.tag == "input"):
+            continue
+        keyword = max(inputs, key=lambda i: _hint_score(i, _KEYWORD_HINTS, _KEYWORD_NAMES))
+        kscore = _hint_score(keyword, _KEYWORD_HINTS, _KEYWORD_NAMES)
+        if kscore == 0:
+            continue
+        others = [i for i in inputs if i is not keyword]
+        location = max(others, key=lambda i: _hint_score(i, _LOCATION_HINTS, _LOCATION_NAMES),
+                       default=None)
+        lscore = (_hint_score(location, _LOCATION_HINTS, _LOCATION_NAMES)
+                  if location is not None else 0)
+        form = SearchForm(keyword=_input_selector(keyword),
+                          location=_input_selector(location) if lscore else "",
+                          submit=_submit_selector(scope))
+        score = kscore * 2 + lscore + (1 if scope.tag == "form" else 0)
+        if best is None or score > best[0]:
+            best = (score, form)
+    return best[1] if best else None
+
+
+def _absolute(href: str, origin: str) -> str:
+    if href.startswith("http"):
+        return href
+    if href.startswith("//"):
+        return "https:" + href
+    if href.startswith("/"):
+        return origin.rstrip("/") + href
+    return ""
+
+
+def find_jobs_link(html: str, origin: str) -> str:
+    """A link from the front door to wherever the searching happens."""
+    root = _parse(html)
+    best: tuple[int, str] | None = None
+    for el in root.walk():
+        if el.tag != "a":
+            continue
+        href = el.attrs.get("href", "")
+        low = href.lower()
+        if not href or any(bad in low for bad in _NOT_A_JOBS_LINK):
+            continue
+        text = el.text().lower()
+        score = 0
+        if "search" in low:
+            score += 2
+        if "/jobs" in low or "/job-search" in low or low.endswith("/jobs/"):
+            score += 2
+        if "search jobs" in text or "find jobs" in text or "browse jobs" in text:
+            score += 2
+        elif "job" in text:
+            score += 1
+        if score and (best is None or score > best[0]):
+            url = _absolute(href, origin)
+            if url:
+                best = (score, url)
+    return best[1] if best else ""
+
+
+def find_login_link(html: str, origin: str) -> str:
+    """The first sign-in link on the page, made absolute."""
+    root = _parse(html)
+    for el in root.walk():
+        if el.tag != "a":
+            continue
+        href = el.attrs.get("href", "")
+        if href and _LOGIN_HREF.search(href) and "logout" not in href.lower():
+            url = _absolute(href, origin)
+            if url:
+                return url
+    return ""
+
+
+def looks_signed_out(html: str) -> bool:
+    """A sign-in link and nothing that only a signed-in page shows."""
+    if not html:
+        return False
+    has_login = bool(find_login_link(html, "https://x"))
+    return has_login and not _SIGNED_IN_MARK.search(html)
+
+
 # ------------------------------------------------------------ the URL
 def _variants(text: str) -> list[str]:
     t = text.strip()

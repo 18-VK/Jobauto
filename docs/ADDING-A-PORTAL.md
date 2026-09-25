@@ -10,20 +10,23 @@ Time: about ten minutes for a site you can already sign in to.
 
 ## The short way (most sites)
 
-1. On the site, in your normal browser, run a search for **your first
-   configured role in your first configured city** (see Preferences). Copy the
-   address bar.
-2. Dashboard -> **Preferences -> Add a portal**: type a name, paste the
-   address, **Add portal**.
+1. Dashboard -> **Preferences -> Add a portal**: type a name and the site's
+   address -- the front page is enough, e.g. `https://www.foundit.in/`.
+   **Add portal**.
+2. Watch your PC. If the site needs an account, a browser window opens there
+   on the sign-in page (the dashboard's status line says so). Sign in and
+   close the window. The PC then finds the site's search box, searches for
+   your first configured role and city, and reads what comes back.
 3. Your PC looks at that page on its next poll (within a minute if it is
    online) and the Portals list updates with what it found:
 
    - **found 24 jobs** -- done. It also shows *search page: ok* and
      *login page: ok* if it could reach the site's sign-in page.
-   - **a sign-in window opens on your PC** -- the site showed nothing to a
-     visitor without an account. Sign in there (OTP included) and close the
-     window; the PC looks again straight away. The dashboard's status line
-     says the window is waiting, in case you added the portal from a phone.
+   - **found 24 jobs (via the site's search box)** -- the PC used the
+     site's own search. Also done.
+   - **no job list and no search box found** -- the PC could not find where
+     to search. Run a search on the site yourself and paste the address you
+     land on instead; that path always works.
    - **needs sign-in** -- same thing, but the PC could not open a window
      (it is running headless). Run `jobauto login --portal <id>` on it, then
      press **Try again** in the list.

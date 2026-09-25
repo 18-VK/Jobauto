@@ -746,8 +746,8 @@ $('#btn-qa-save').onclick = async () => {
   try {
     await savePortalsBlock();
     showQaMsg(agentOnline
-      ? `Added ${name}. Your PC is looking at it now; this list updates within a minute. If the site needs an account to show results, run on your PC first: jobauto login --portal ${id}`
-      : `Added ${name}. It will be looked at when your PC is next online. If the site needs an account to show results, run on your PC first: jobauto login --portal ${id}`, true);
+      ? `Added ${name}. Your PC is looking at it now -- if the site needs an account, a sign-in window will open there. This list updates within a minute.`
+      : `Added ${name}. It will be looked at when your PC is next online -- if the site needs an account, a sign-in window will open there.`, true);
     $('#qa-name').value = ''; $('#qa-url').value = '';
     loadPortals();
   } catch (e) {

@@ -353,6 +353,10 @@ requires only name, base_url, url_template). `load_config` materialises it
 search runs. `LocalAgent.detect_pending_portals` runs at the top of every
 `tick`, once an hour per portal, in that portal's own profile; it also checks
 the login page (given, or the first sign-in link found) and reports `checks`.
+Given only a front page, `_detect_one` signs in first (`looks_signed_out`,
+`find_login_link`, a headed window via `_wait_for_signin`), then `_explore`
+finds the search box (`find_search_form`, or one `find_jobs_link` away),
+types the first role/city, submits, and tokenises the landing URL.
 `_look_at` classifies the page (jobs / challenge / login / empty), polling up
 to `DETECT_WAIT_SECONDS`; on `empty`/`login` a headed agent opens the
 sign-in page in the portal's profile, waits via `wait_for_login`, and looks
