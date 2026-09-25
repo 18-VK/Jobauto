@@ -174,6 +174,12 @@ class Pipeline:
                         note = f"search failed: {type(exc).__name__}: {exc}"
                         self._say(portal.id, note)
                         continue
+                    # Not errors: what the adapter did that the user should
+                    # know about, such as falling back to detected selectors.
+                    for line in getattr(adapter, "notes", None) or []:
+                        self._say(portal.id, line)
+                    if getattr(adapter, "notes", None):
+                        adapter.notes.clear()
                     self._say(portal.id,
                               f"{len(jobs) - before} found for {title}")
                 if not jobs and not note:

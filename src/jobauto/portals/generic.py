@@ -41,6 +41,11 @@ class ConfigDrivenAdapter(PortalAdapter):
         self.last_container_seen = None
         self.last_skipped = 0
         self.last_error = ""
+        # Things worth telling the user that are not errors -- the pipeline
+        # drains these into the run log after each search.
+        self.notes: list[str] = []
+        # What detection found when the YAML selectors matched nothing.
+        self.last_detected: Any = None
 
     def note_landing(self) -> None:
         """Where we actually ended up, which is not always where we asked to
@@ -147,14 +152,21 @@ class ConfigDrivenAdapter(PortalAdapter):
                 return ("the sign-in page is showing instead of jobs -- the "
                         f"saved session is expired. Run: python -m jobauto "
                         f"login --portal {self.id}{self._landed()}")
+            # Detection was tried on this page too. Its verdict is the more
+            # useful one: a page with no repeating job list is not a page
+            # whose selectors are stale, it is the wrong page.
+            tried = ("; automatic detection found no repeating job list on "
+                     "the page either, so this is probably not a results "
+                     "page -- check the url_template")
             if self.last_container_seen is False:
                 return (f"nothing matched search.results_container or "
                         f"search.result_card ({where}){self._landed()}. "
                         f"Either both selectors are stale or you are not "
                         f"signed in -- try: python -m jobauto login "
-                        f"--portal {self.id}")
+                        f"--portal {self.id}{tried}")
             return (f"the page loaded but search.result_card matched 0 cards "
-                    f"({where}){self._landed()} -- that selector is stale")
+                    f"({where}){self._landed()} -- that selector is stale"
+                    f"{tried}")
         return (f"{self.last_card_count} cards matched but {self.last_skipped} "
                 f"were skipped for having no title or url -- "
                 f"search.fields.title / search.fields.url in {where} are stale")
@@ -285,7 +297,61 @@ class ConfigDrivenAdapter(PortalAdapter):
             self.note_landing()
             return
 
-        fields = self.portal.search.get("fields", {})
+        if count == 0:
+            yield from self._scrape_detected()
+            return
+        yield from self._scrape_cards(cards, count,
+                                      self.portal.search.get("fields", {}))
+
+    def _scrape_detected(self) -> Iterator[Job]:
+        """The YAML matched nothing. Before blaming it, look at the page.
+
+        Portal markup drifts every few months and the shipped selectors were
+        never checked against a live site, so "0 cards" is usually a stale
+        selector on a page full of jobs. The same detection that reads a
+        brand-new portal reads this one: find the repeating block with a job
+        link, use it for this run, and say what was found so the YAML can be
+        fixed for good. A page that is a login form or a bot check is left
+        alone -- there is nothing to detect there, and the landing diagnosis
+        already names it.
+        """
+        self.note_landing()
+        if self._diagnose_landing():
+            return
+        try:
+            from .detect import detect
+            det = detect(self.page.content())
+        except Exception:
+            det = None
+        self.last_detected = det
+        if det is None:
+            return
+
+        search = det.to_search()
+        try:
+            cards = self.page.locator(search["result_card"])
+            count = cards.count()
+        except Exception:
+            return
+        if not count:
+            return
+        self.notes.append(
+            f"search.result_card in config/portals/{self.id}.yaml matched "
+            f"nothing, but the page has {count} job cards -- using detected "
+            f"selectors for this run (card: {det.result_card}). Run "
+            f"`jobauto dump --portal {self.id}` to see the YAML to keep.")
+        yield from self._scrape_cards(cards, count, search["fields"])
+
+    def suggested_yaml(self) -> str:
+        """The search block detection would put in this portal's file."""
+        det = getattr(self, "last_detected", None)
+        if det is None:
+            return ""
+        import yaml as _yaml
+        return _yaml.safe_dump({"search": det.to_search()}, sort_keys=False)
+
+    def _scrape_cards(self, cards: Any, count: int,
+                      fields: dict[str, Any]) -> Iterator[Job]:
         for i in range(count):
             try:
                 card = cards.nth(i)

@@ -377,6 +377,15 @@ def cmd_dump(args: argparse.Namespace) -> int:
                 print(f"    cards   {len(found)} matched search.result_card")
                 if not found and hasattr(adapter, "why_no_results"):
                     print(f"    because {adapter.why_no_results()}")
+                for line in getattr(adapter, "notes", None) or []:
+                    print(f"    note    {line}")
+                suggestion = getattr(adapter, "suggested_yaml", lambda: "")()
+                if suggestion:
+                    print()
+                    print(f"    The YAML selectors matched nothing; these did. "
+                          f"Put this in config/portals/{portal.id}.yaml:")
+                    for line in suggestion.rstrip().splitlines():
+                        print(f"      {line}")
                 print(f"    saved   {html_path}")
                 if png_path:
                     print(f"    saved   {png_path}")
