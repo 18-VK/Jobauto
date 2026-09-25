@@ -358,6 +358,17 @@ using `_replace_yaml_block` (same routine as the dashboard), sets
 `detect: false`, and the next sync switches the portal on. `jobauto detect`
 is the local-only equivalent.
 
+### Self-healing selectors
+
+When a shipped portal's `result_card` matches nothing, `_scrape_detected()`
+runs the same detection on the page, uses what it finds for that run, and
+appends a note to `adapter.notes` (drained into the run log by
+`_search_portal`). `dump` prints `suggested_yaml()` -- the block to paste
+into the portal file. It never runs on a login/bot-check landing, and when
+it also finds nothing `why_no_results` says the page is probably not a
+results page. Fixing the YAML for good is still the right end state; this
+keeps results flowing until then.
+
 ## Config layering
 
 `config/<name>.local.yaml` overrides `config/<name>.yaml` when present.
