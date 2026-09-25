@@ -609,6 +609,18 @@ def create_app() -> Flask:
 
         with session() as s:
             user = s.get(User, g.user.id)
+            # Optimistic concurrency for whole-file saves. The file changes
+            # from the other end too -- the PC writes detected selectors into
+            # it -- and a save built on an older copy would overwrite that.
+            # Block edits re-base before saving and send no stamp.
+            expected = payload.get("expected_updated")
+            current = _iso(user.preferences_updated)
+            if expected is not None and expected != current:
+                return jsonify({
+                    "error": "preferences changed on the server since you "
+                             "loaded them -- press Revert to load the latest, "
+                             "then re-apply your edit",
+                    "updated": current}), 409
             user.preferences_yaml = text
             user.preferences_updated = utcnow()
             s.commit()

@@ -326,6 +326,17 @@ that matches >1.5× the card count on the page is narrowed with
 `:has(<title>)`; `_scrape_cards` then de-duplicates by URL, because the
 narrowed selector also matches the list and inner boxes.
 
+### The preferences file changes from both ends
+
+The PC writes into `preferences_yaml` too (`/api/agent/portals/<id>/detected`),
+so the dashboard must never save text it loaded earlier. Block saves
+(schedule, portals) call `freshPrefsText()` and re-base on the server's
+current text; the raw editor save sends `expected_updated` and the server
+returns **409** if the stamp moved (`api_save_prefs`). While the Preferences
+tab is open, `refreshPreferencesView()` re-polls the Portals list and the
+editor text (only when untouched) every 15 s — before that, a portal added
+from the dashboard showed "waiting for your PC" until a page reload.
+
 ## Switching portals off
 
 `preferences.portals.disabled: [indeed, hirist]` switches portals off

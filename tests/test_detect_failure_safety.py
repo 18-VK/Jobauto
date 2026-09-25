@@ -81,3 +81,49 @@ def test_the_pc_treats_a_failed_portal_as_pending_and_switched_off():
     apply_portal_preferences(cfg)
     assert "foundit" in cfg.portals and not cfg.portals["foundit"].enabled
     assert cfg.custom_portal_problems == []
+
+
+# ------------------------- a stale save must not undo what the PC reported
+def test_a_whole_file_save_built_on_an_old_copy_is_refused(client):
+    """The PC wrote detected selectors into the file after the page loaded.
+    Saving the editor's old text would overwrite them; the server refuses."""
+    tok = _add_and_fail(client)
+    loaded = client.get("/api/preferences").get_json()
+    # the PC reports in the meantime
+    client.post("/api/agent/portals/foundit/detected", headers=H(tok), json={
+        "template": "x", "placed": [], "cards": 5,
+        "search": {"result_card": ".c", "fields": {"title": ".t", "url": {"selector": "a", "attr": "href"}}}})
+    res = client.post("/api/preferences", json={"yaml": loaded["yaml"],
+                                                "expected_updated": loaded["updated"]})
+    assert res.status_code == 409
+    assert "changed on the server" in res.get_json()["error"]
+    # and the detected selectors are still there
+    synced = yaml.safe_load(client.get("/api/preferences").get_json()["yaml"])
+    assert synced["portals"]["custom"]["foundit"]["search"]["result_card"] == ".c"
+
+
+def test_a_save_with_the_current_stamp_goes_through(client):
+    _add_and_fail(client)
+    loaded = client.get("/api/preferences").get_json()
+    res = client.post("/api/preferences", json={"yaml": loaded["yaml"] + "\n# note\n",
+                                                "expected_updated": loaded["updated"]})
+    assert res.status_code == 200
+
+
+def test_a_save_without_a_stamp_still_works():
+    """Block edits re-base on the server text first and send no stamp, as
+    does anything older than this guard."""
+    from pathlib import Path
+    js = (Path(__file__).resolve().parent.parent / "src" / "jobauto" / "cloud"
+          / "static" / "cloud.js").read_text(encoding="utf-8")
+    # both block saves build on the server's current text ...
+    assert js.count("await freshPrefsText()") >= 2
+    # ... and the preferences view re-polls while it is open
+    assert "refreshPreferencesView" in js.split("setInterval(() => { loadSummary();")[1]
+
+
+def test_the_raw_editor_save_carries_its_stamp():
+    from pathlib import Path
+    js = (Path(__file__).resolve().parent.parent / "src" / "jobauto" / "cloud"
+          / "static" / "cloud.js").read_text(encoding="utf-8")
+    assert "expected_updated: prefsStamp" in js

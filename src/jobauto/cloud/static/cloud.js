@@ -437,14 +437,57 @@ function makeSearchYamlFromForm() {
   };
 }
 
+/* The file changes underneath this page: the PC writes detected selectors
+   into it, another tab saves a schedule. Every save here builds on the
+   server's current text, never on what the textarea held at page load --
+   that is how a schedule save was silently undoing a detection result. */
+let prefsStamp = null;        // `updated` of the text last loaded
+let prefsLoadedText = '';     // what the textarea held right after loading
+
+function prefsDirty() {
+  return $('#pref-yaml').value !== prefsLoadedText;
+}
+
+function takePrefs(d) {
+  $('#pref-yaml').value = d.yaml;
+  prefsLoadedText = d.yaml;
+  prefsStamp = d.updated || null;
+  $('#pref-updated').textContent = 'last saved ' + ago(d.updated);
+}
+
 async function loadPrefs() {
   try {
     const d = await api('/api/preferences');
-    $('#pref-yaml').value = d.yaml;
+    takePrefs(d);
     fillQuickFilterEditorFromYaml(d.yaml);
-    $('#pref-updated').textContent = 'last saved ' + ago(d.updated);
     $('#pref-msg').hidden = true;
   } catch (e) { prefMsg(e.message, false); }
+}
+
+/* The server's current text, for a block edit to build on. Refreshes the
+   textarea too when the user has not typed in it; otherwise says so. */
+async function freshPrefsText() {
+  const d = await api('/api/preferences');
+  if (d.updated !== prefsStamp) {
+    if (!prefsDirty()) {
+      takePrefs(d);
+    } else {
+      prefMsg('Changed on the server since you loaded it (your PC may have '
+              + 'reported detected selectors). Press Revert to load the latest, '
+              + 'then re-apply your edit.', false);
+    }
+  }
+  return d.yaml;
+}
+
+/* While the Preferences tab is open, keep it honest without a reload: the
+   Portals list, which the PC updates from the other end, and the editor
+   text when it has not been touched. */
+async function refreshPreferencesView() {
+  const view = $('#view-preferences');
+  if (!view || !view.classList.contains('is-active')) return;
+  try { await freshPrefsText(); } catch { /* offline; the next tick tries again */ }
+  loadPortals();
 }
 
 function prefMsg(text, ok) {
@@ -470,11 +513,13 @@ $('#btn-pref-save').onclick = async () => {
   const yaml = $('#pref-yaml').value;
   btn.disabled = true;
   try {
+    // The whole file, so it carries the stamp it was loaded from: if the
+    // server's copy moved on since, it refuses rather than let this
+    // overwrite what changed.
     const saved = await api('/api/preferences', {
-      method: 'POST', body: JSON.stringify({ yaml }),
+      method: 'POST', body: JSON.stringify({ yaml, expected_updated: prefsStamp }),
     });
-    $('#pref-yaml').value = saved.yaml || yaml;
-    $('#pref-updated').textContent = 'last saved ' + ago(saved.updated || new Date().toISOString());
+    takePrefs({ yaml: saved.yaml || yaml, updated: saved.updated || new Date().toISOString() });
     prefMsg(agentOnline
       ? 'Saved to the cloud DB. Your PC will pick this up within a minute.'
       : 'Saved to the cloud DB. Your PC will pick this up when it next comes online.', true);
@@ -564,9 +609,13 @@ $('#btn-sched-save').onclick = async () => {
     return showSchedMsg('Pick at least one day, or turn the schedule off.', false);
   }
 
-  // Edit the schedule block inside the existing YAML rather than rewriting the
-  // whole file -- everything else in there is the user's.
-  let text = $('#pref-yaml').value || '';
+  // Edit the schedule block inside the server's current YAML rather than
+  // rewriting the whole file -- everything else in there is the user's, and
+  // some of it may have changed since this page loaded.
+  btn.disabled = true;
+  let text;
+  try { text = await freshPrefsText(); }
+  catch (e) { btn.disabled = false; return showSchedMsg(e.message, false); }
   const block = [
     'schedule:',
     `  enabled: ${$('#sched-enabled').checked}`,
@@ -582,10 +631,9 @@ $('#btn-sched-save').onclick = async () => {
 
   text = replaceYamlBlock(text, 'schedule', block);
 
-  btn.disabled = true;
   try {
-    await api('/api/preferences', { method: 'POST', body: JSON.stringify({ yaml: text }) });
-    $('#pref-yaml').value = text;
+    const saved = await api('/api/preferences', { method: 'POST', body: JSON.stringify({ yaml: text }) });
+    takePrefs({ yaml: saved.yaml || text, updated: saved.updated });
     showSchedMsg(agentOnline
       ? 'Saved. Your PC will pick this up within a minute.'
       : 'Saved. It starts when your PC next comes online.', true);
@@ -633,10 +681,10 @@ function portalsBlock() {
 }
 
 async function savePortalsBlock() {
-  let text = $('#pref-yaml').value || '';
+  let text = await freshPrefsText();
   text = replaceYamlBlock(text, 'portals', portalsBlock());
-  await api('/api/preferences', { method: 'POST', body: JSON.stringify({ yaml: text }) });
-  $('#pref-yaml').value = text;
+  const saved = await api('/api/preferences', { method: 'POST', body: JSON.stringify({ yaml: text }) });
+  takePrefs({ yaml: saved.yaml || text, updated: saved.updated });
 }
 
 async function loadPortals() {
@@ -1150,4 +1198,4 @@ $('#f-age').addEventListener('change', loadJobs);
 /* --------------------------------------------------------------- boot */
 loadSummary();
 loadJobs();
-setInterval(() => { loadSummary(); }, 15000);
+setInterval(() => { loadSummary(); refreshPreferencesView(); }, 15000);
