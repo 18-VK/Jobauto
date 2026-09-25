@@ -307,6 +307,25 @@ Stuck-task reapers in `cloud/app.py` (`_reap_orphaned_tasks`,
 
 `db.py` normalises `postgres://` → `postgresql+psycopg://`.
 
+### Sign-in mid-run
+
+`Pipeline.login_hook: Callable[[portal], bool] | None`. When a search or an
+apply batch raises `LoginRequired`, the pipeline calls it (one window at a
+time, `_login_lock`), and on True tries that portal **once** more — outside
+the browser session, since two browsers on one profile corrupt it. The agent
+sets it to `_login_window` (`interactive_login`, `RUN_SIGNIN_MINUTES`, status
+pushed to the dashboard) and the CLI to `_attach_login_window`, both only
+when headed. `None` keeps the old "run `jobauto login`" message.
+
+### Selector hygiene in detection
+
+`_MINTED` covers `css-`/`sc-`/`mui-style-`/`chakra-` prefixes, hex runs,
+and `-<digit><alnum>{3,}` / `__…<digit>…` suffixes; `_TEST_ATTRS`
+(`data-testid` etc.) and `role=listitem` beat any class. A card selector
+that matches >1.5× the card count on the page is narrowed with
+`:has(<title>)`; `_scrape_cards` then de-duplicates by URL, because the
+narrowed selector also matches the list and inner boxes.
+
 ## Switching portals off
 
 `preferences.portals.disabled: [indeed, hirist]` switches portals off
