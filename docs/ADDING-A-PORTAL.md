@@ -20,9 +20,15 @@ Time: about ten minutes for a site you can already sign in to.
 
    - **found 24 jobs** -- done. It also shows *search page: ok* and
      *login page: ok* if it could reach the site's sign-in page.
-   - **needs sign-in** -- the site wants an account before it shows results.
-     On your PC run `jobauto login --portal <id>`, sign in, then press
-     **Try again** in the list.
+   - **a sign-in window opens on your PC** -- the site showed nothing to a
+     visitor without an account. Sign in there (OTP included) and close the
+     window; the PC looks again straight away. The dashboard's status line
+     says the window is waiting, in case you added the portal from a phone.
+   - **needs sign-in** -- same thing, but the PC could not open a window
+     (it is running headless). Run `jobauto login --portal <id>` on it, then
+     press **Try again** in the list.
+   - **bot check** -- the site blocks automation outright, like Indeed. No
+     amount of signing in helps; remove it.
    - **no job list found** -- the address was not a results page. Search on
      the site first, then paste the address you land on.
 

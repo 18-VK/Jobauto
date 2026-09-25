@@ -353,6 +353,10 @@ requires only name, base_url, url_template). `load_config` materialises it
 search runs. `LocalAgent.detect_pending_portals` runs at the top of every
 `tick`, once an hour per portal, in that portal's own profile; it also checks
 the login page (given, or the first sign-in link found) and reports `checks`.
+`_look_at` classifies the page (jobs / challenge / login / empty), polling up
+to `DETECT_WAIT_SECONDS`; on `empty`/`login` a headed agent opens the
+sign-in page in the portal's profile, waits via `wait_for_login`, and looks
+again. The page seen is saved to `data/debug/<id>.html`.
 `POST /api/agent/portals/<id>/detected` merges the result into the YAML
 using `_replace_yaml_block` (same routine as the dashboard), sets
 `detect: false`, and the next sync switches the portal on. `jobauto detect`

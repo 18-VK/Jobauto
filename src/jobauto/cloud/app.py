@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -1230,7 +1231,12 @@ def _validate_custom_portals(custom: Any) -> list[str]:
             out.append(f"portals.custom.{pid} must be a mapping")
             continue
         # Added with just a name and a URL: the PC fills the selectors in.
-        required = (_CUSTOM_REQUIRED[:3] if data.get("detect")
+        # A portal the PC looked at and could not read stays in this state
+        # too -- `detected` present, selectors absent -- so it can be shown
+        # with its error and retried, rather than making the whole file
+        # invalid on every poll.
+        required = (_CUSTOM_REQUIRED[:3]
+                    if data.get("detect") or data.get("detected") is not None
                     else _CUSTOM_REQUIRED)
         missing = [".".join(path) for path in required if not _dig(data, path)]
         if missing:
@@ -1274,18 +1280,30 @@ def _default_preferences_yaml() -> str:
 
 
 def _safe_preferences_yaml(raw: str | None) -> str:
+    """What the agent is handed. Defaults only when there is nothing else.
+
+    This used to replace the file with the shipped defaults whenever it
+    failed validation -- every role, weight and schedule the user had set,
+    gone silently, because one custom portal was incomplete. A file that
+    parses is the user's and is handed over as it is; the PC's own loader
+    skips a bad portal entry and says so. Only an empty or unparseable file
+    gets the defaults, since there is nothing to keep.
+    """
     text = (raw or "").strip()
     if not text:
         return _default_preferences_yaml()
     try:
         parsed = yaml.safe_load(text)
-        if not isinstance(parsed, dict):
-            raise ValueError("preferences must be a YAML mapping")
-        if _validate_preferences(parsed):
-            raise ValueError(_validate_preferences(parsed))
-        return text
     except Exception:
         return _default_preferences_yaml()
+    if not isinstance(parsed, dict):
+        return _default_preferences_yaml()
+    problem = _validate_preferences(parsed)
+    if problem:
+        import logging
+        logging.getLogger("jobauto.cloud").warning(
+            "preferences fail validation but are kept: %s", problem)
+    return text
 
 
 app = None

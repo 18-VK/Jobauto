@@ -236,7 +236,11 @@ def _materialise_custom_portals(cfg: Config, block: dict[str, Any]) -> None:
         # to work its selectors out. It exists -- so `login --portal <id>`
         # can sign in to it and detection runs in that signed-in profile --
         # but it is switched off, so no search runs against it yet.
-        pending = bool(data.get("detect")) and bool(missing)
+        # Also pending when the PC already looked and could not read the page
+        # (`detected` set, selectors still missing): it stays switched off,
+        # shows its error in the dashboard, and can be retried.
+        pending = bool(missing) and bool(data.get("detect")
+                                         or data.get("detected") is not None)
         if missing and not pending:
             cfg.custom_portal_problems.append(
                 f"{pid}: missing {', '.join(missing)}")
