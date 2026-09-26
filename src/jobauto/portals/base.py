@@ -56,6 +56,28 @@ class PortalAdapter(ABC):
         self.config = config
         self.page = page          # a Playwright Page
         self._actions = 0
+        # Set by the pipeline before each application: the moment after
+        # which a form that is still asking questions is left for the user.
+        # Every browser call is bounded on its own, but a chatbot or a
+        # wizard strings dozens together, and without this one awkward form
+        # could sit "waiting" through most of a batch.
+        self.deadline: float | None = None
+
+    def out_of_time(self) -> bool:
+        # getattr, not self.deadline: test doubles are built with __new__ and
+        # never run __init__, and a clock nobody started is simply not running.
+        deadline = getattr(self, "deadline", None)
+        return deadline is not None and time.monotonic() > deadline
+
+    def left_for_you(self, what: str) -> str:
+        """The note for an application the automation is handing back.
+
+        Not "finish it in the browser": the run moves to the next job seconds
+        later and that page is gone, so a note pointing at it points nowhere.
+        The application goes to the review list; the user applies there.
+        """
+        name = getattr(getattr(self, "portal", None), "name", None) or "the portal"
+        return f"{what} -- left for you: apply for this one on {name} yourself"
 
     # -------------------------------------------------------------- helpers
     @property

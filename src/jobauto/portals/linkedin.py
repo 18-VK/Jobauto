@@ -155,6 +155,10 @@ class LinkedInAdapter(ConfigDrivenAdapter):
 
         combined = AnswerResult()
         for step in range(self.MAX_STEPS):
+            if self.out_of_time():
+                combined.note = self.left_for_you(
+                    f"Easy Apply was still on step {step + 1} when time ran out")
+                return combined
             result = answerer.answer_all(self.read_questions())
             combined.answered.update(result.answered)
             for question in result.escalated:

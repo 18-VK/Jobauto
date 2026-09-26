@@ -60,6 +60,10 @@ class NaukriAdapter(ConfigDrivenAdapter):
         seen: set[str] = set()
 
         for _ in range(self.MAX_QUESTIONS):
+            if self.out_of_time():
+                combined.note = self.left_for_you(
+                    "the chatbot was still asking questions when time ran out")
+                break
             fresh = [q for q in self.read_questions() if q not in seen]
             if not fresh:
                 break                       # nothing new: the drawer is done
@@ -74,15 +78,15 @@ class NaukriAdapter(ConfigDrivenAdapter):
             if not result.answered:
                 # Only questions we will not answer -- pressing on would just
                 # re-read the same thing.
-                combined.note = ("the chatbot is waiting on a question left "
-                                 "blank on purpose -- answer it in the browser")
+                combined.note = self.left_for_you(
+                    "the chatbot is waiting on a question left blank on purpose")
                 break
 
             for text in result.answered.values():
                 try:
                     if not self.answer(text):
-                        combined.note = ("could not type an answer into the "
-                                         "chatbot -- finish it in the browser")
+                        combined.note = self.left_for_you(
+                            "could not type an answer into the chatbot")
                         return combined
                 except Exception:
                     combined.note = "the chatbot stopped responding"

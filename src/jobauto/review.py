@@ -78,10 +78,14 @@ class ReviewGate:
 
         if app.escalated:
             # Never auto-submit something with unanswered screening questions,
-            # regardless of the auto_submit setting.
-            print("\n  Unanswered questions above -- this one needs you "
-                  "regardless of auto-submit.")
-        elif self.auto:
+            # regardless of the auto_submit setting -- and never stop the run
+            # to ask about it either. There is nothing to submit yet, so a
+            # prompt here was a manual interaction that blocked every job
+            # behind it. It goes to the review list; the user finishes it.
+            print("\n  Unanswered questions above -- left in the review list "
+                  "for you to finish. Moving on.")
+            return Decision.DEFER
+        if self.auto:
             print("\n  auto_submit is on -- submitting.")
             return Decision.SUBMIT
 

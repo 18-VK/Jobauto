@@ -177,6 +177,15 @@ the outcome; a new tab after clicking apply means an external hand-off. A
 batch is bounded by `APPLY_BUDGET_SECONDS`, and browser timeouts are set on
 the **context** so popups inherit them.
 
+**One application is bounded too.** `APPLICATION_BUDGET_SECONDS` (3 min):
+the pipeline sets `adapter.deadline` before each application; Naukri's and
+LinkedIn's fill loops check `out_of_time()` each round and hand the form
+back with `left_for_you(...)`, and the pipeline backstops after the fill.
+"left for you" is a `_NEEDS_REVIEW_MARKERS` entry → `prepared`, so it lands
+in the review list, not the retry queue. `ReviewGate.ask` **never prompts**
+on an application with escalated questions — it defers in both modes;
+prompting there was a manual interaction that blocked every job behind it.
+
 `within_active_hours`: equal hours (`[0, 0]`) is an **empty window and blocks**.
 "Any hour" is spelled by omitting the key. Shipped default is `[8, 22]`.
 

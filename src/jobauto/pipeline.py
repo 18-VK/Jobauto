@@ -36,6 +36,14 @@ MAX_PARALLEL_PORTALS = 5
 # browser by hand.
 APPLY_BUDGET_SECONDS = 25 * 60
 
+# A ceiling on one application, in seconds. Generous for a form: a chatbot
+# with ten questions finishes in under a minute. What it bounds is the form
+# that is still asking -- a question the automation must not answer, a step
+# that never advances -- which used to hold the browser "waiting" for as long
+# as its individual calls took to time out, one after another. Past this it
+# is handed back: recorded as needing the user, and the run moves on.
+APPLICATION_BUDGET_SECONDS = 3 * 60
+
 
 def within_active_hours(config: Config) -> tuple[bool, str]:
     """Applying at 3am is a strong automation tell.
@@ -533,6 +541,8 @@ class Pipeline:
                     continue
 
                 job = _job_from_row(row)
+                started = time.monotonic()
+                adapter.deadline = started + APPLICATION_BUDGET_SECONDS
                 try:
                     job = adapter.fetch_detail(job)
                 except VerificationRequired as exc:
@@ -599,6 +609,12 @@ class Pipeline:
 
                 app.answered, app.escalated = answers.answered, answers.escalated
                 note = getattr(answers, "note", "")
+                # The adapter's loops check the deadline themselves; this is
+                # the backstop for a fill that ran long some other way.
+                if not note and time.monotonic() - started > APPLICATION_BUDGET_SECONDS:
+                    note = (f"took longer than {APPLICATION_BUDGET_SECONDS // 60} "
+                            f"minutes on the page -- left for you: apply for "
+                            f"this one on {adapter.portal.name} yourself")
                 if note:
                     self.log(f"      {note}")
 
@@ -705,6 +721,10 @@ _EXTERNAL_MARKERS = ("apply by hand",)
 # to finish or discard -- which is what the review gate is for.
 _NEEDS_REVIEW_MARKERS = (
     "needs a look",
+    # Handed back part-way -- a question the automation must not answer, a
+    # form still asking when time ran out. The application may be half-made
+    # on the portal, so it goes to the review list rather than being retried.
+    "left for you",
     "waiting on a question left blank on purpose",
     "answer it in the browser",
     "finish it in the browser",
