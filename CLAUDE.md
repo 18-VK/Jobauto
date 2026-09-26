@@ -289,6 +289,11 @@ Invariants with tests:
   empty.
 - Marking an application submitted/skipped moves the `CloudJob` too. They
   are separate rows joined by fingerprint.
+- **`thresholds.shortlist` is enforced end to end.** The agent pushes only
+  jobs at or above it (`push_state`); `/api/jobs` with a blank `min_score`
+  uses it (`_shortlist_threshold`), as does the summary count; and every
+  `POST /api/agent/jobs` runs `_drop_below_threshold`, deleting the user's
+  sub-threshold jobs that are neither queued nor applied to. Default 60.
 - `POST /api/jobs/queue` `{ids, queued}` **sets** (the per-job route
   toggles), skips acted-on jobs, returns the queued total. The Jobs tab
   re-reads itself every 15 s while open (`refreshJobsView`), and the

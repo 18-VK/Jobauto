@@ -264,10 +264,12 @@ def create_app() -> Flask:
             acted_on = select(Application.fingerprint).where(
                 Application.user_id == uid,
                 Application.status.in_(_RETIRES_JOB_STATUSES))
+            threshold = _shortlist_threshold(s.get(User, uid))
             counts = {
                 "jobs": s.scalar(select(func.count(CloudJob.id))
                                  .where(CloudJob.user_id == uid,
                                         CloudJob.dropped == False,          # noqa: E712
+                                        CloudJob.score >= threshold,
                                         CloudJob.fingerprint.notin_(acted_on))) or 0,
                 "dropped": s.scalar(select(func.count(CloudJob.id))
                                     .where(CloudJob.user_id == uid,
@@ -317,8 +319,12 @@ def create_app() -> Flask:
                     .where(CloudJob.user_id == g.user.id,
                            CloudJob.dropped == False)     # noqa: E712
                     .order_by(desc(CloudJob.score)).limit(limit))
-            if min_score is not None:
-                stmt = stmt.where(CloudJob.score >= min_score)
+            # A blank filter means the user's threshold, not zero: the
+            # preferences promise jobs below it are never shown. Typing a
+            # lower number in the filter still shows them on request.
+            if min_score is None:
+                min_score = _shortlist_threshold(s.get(User, g.user.id))
+            stmt = stmt.where(CloudJob.score >= min_score)
             if portal:
                 stmt = stmt.where(CloudJob.portal == portal)
             if max_age and max_age > 0:
@@ -917,6 +923,11 @@ def create_app() -> Flask:
                 job.reasons_json = json.dumps(row.get("reasons") or [])
                 job.dropped = bool(row.get("dropped"))
             s.commit()
+            # Jobs below the threshold have no business in the list, whether
+            # pushed by an older agent or scored before the threshold was
+            # raised. Gone unless the user queued them or applied to them --
+            # those are the user's, whatever the score.
+            _drop_below_threshold(s, g.agent.user_id)
         auth.touch_agent(g.agent.id, f"pushed {len(rows)} jobs")
         return jsonify({"ok": True, "added": added, "updated": updated})
 
@@ -1293,6 +1304,36 @@ def _validate_custom_portals(custom: Any) -> list[str]:
         if not str(data.get("base_url", "")).startswith(("http://", "https://")):
             out.append(f"portals.custom.{pid}.base_url must start with http")
     return out
+
+
+def _shortlist_threshold(user: User | None) -> float:
+    """thresholds.shortlist from the user's preferences; 60 if unset."""
+    try:
+        parsed = yaml.safe_load((user.preferences_yaml if user else "") or "") or {}
+        value = (parsed.get("thresholds") or {}).get("shortlist", 60)
+        return float(value if value is not None else 60)
+    except Exception:
+        return 60.0
+
+
+def _drop_below_threshold(s, user_id: int) -> int:
+    """Remove this user's jobs scored under their threshold, except any they
+    queued or applied to. Returns how many went."""
+    user = s.get(User, user_id)
+    threshold = _shortlist_threshold(user)
+    acted_on = select(Application.fingerprint).where(
+        Application.user_id == user_id,
+        Application.status.in_(_RETIRES_JOB_STATUSES))
+    doomed = s.scalars(select(CloudJob).where(
+        CloudJob.user_id == user_id,
+        CloudJob.score < threshold,
+        CloudJob.state != "queued",
+        CloudJob.fingerprint.notin_(acted_on))).all()
+    for job in doomed:
+        s.delete(job)
+    if doomed:
+        s.commit()
+    return len(doomed)
 
 
 def _replace_yaml_block(text: str, name: str, block: str) -> str:

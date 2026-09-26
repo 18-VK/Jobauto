@@ -162,7 +162,12 @@ class LocalAgent:
         from ..scoring import Scorer
         scorer = Scorer(config.preferences, config.profile)
 
-        rows = db.shortlist(min_score=0, limit=400, exclude_applied=False)
+        # Only what clears the threshold. The preferences file promises that
+        # jobs below thresholds.shortlist are never shown, and this pushed
+        # everything from zero up -- the dashboard filled with jobs the
+        # scorer had already rejected.
+        threshold = float(config.thresholds.get("shortlist", 60) or 0)
+        rows = db.shortlist(min_score=threshold, limit=400, exclude_applied=False)
         jobs = [{
             "fingerprint": r["fingerprint"],
             "portal": r["portal"],

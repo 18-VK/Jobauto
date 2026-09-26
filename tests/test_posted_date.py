@@ -161,7 +161,8 @@ def test_bad_date_from_a_portal_is_ignored_not_fatal(client):
     token = client.get("/api/agents").get_json()["agents"][0]["token"]
     res = client.post("/api/agent/jobs", headers={"X-Agent-Token": token}, json={
         "jobs": [{"fingerprint": "bad", "portal": "naukri", "title": "T",
-                  "company": "C", "url": "u", "posted_date": "not a date"}]})
+                  "company": "C", "url": "u", "posted_date": "not a date",
+                  "score": 90.0}]})       # above the threshold, so it is listed
     assert res.status_code == 200
     assert client.get("/api/jobs").get_json()["jobs"][0]["posted_date"] is None
 
