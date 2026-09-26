@@ -20,6 +20,7 @@ set "HOME_DIR=%USERPROFILE%\.jobauto"
 set "VENV=%HOME_DIR%\venv"
 set "PY=%VENV%\Scripts\python.exe"
 set "EXE=%VENV%\Scripts\jobauto.exe"
+set "RECREATED="
 
 echo.
 echo   jobauto -- setting this PC to run by itself
@@ -29,16 +30,9 @@ echo.
 rem ----------------------------------------------------------- python
 if exist "%PY%" goto :have_venv
 
+:make_venv
 echo   No environment yet. Creating one in %HOME_DIR% ...
-set "SYSPY="
-for %%C in (python.exe py.exe python3.exe) do (
-    if not defined SYSPY (
-        for /f "delims=" %%P in ('where %%C 2^>nul') do (
-            if not defined SYSPY set "SYSPY=%%P"
-        )
-    )
-)
-
+call :find_python
 if not defined SYSPY (
     echo.
     echo   [X] Python was not found on this PC.
@@ -59,6 +53,37 @@ if errorlevel 1 (
 )
 
 :have_venv
+rem ------------------------------------------------------------- pip
+rem  A python.exe is not an environment. A venv can exist without pip: the
+rem  Store and Debian-style Pythons ship no ensurepip, and a venv left by a
+rem  run that died half-way looks the same. Check for pip itself, bootstrap
+rem  it, and only then call the environment ready.
+"%PY%" -m pip --version >nul 2>&1
+if errorlevel 1 (
+    echo   pip is missing from the environment -- adding it ...
+    "%PY%" -m ensurepip --upgrade --default-pip >nul 2>&1
+)
+"%PY%" -m pip --version >nul 2>&1
+if errorlevel 1 (
+    echo   this Python has no ensurepip -- fetching pip from pypa.io ...
+    curl.exe -fsSL https://bootstrap.pypa.io/get-pip.py -o "%TEMP%\get-pip.py"
+    if not errorlevel 1 "%PY%" "%TEMP%\get-pip.py" --quiet
+)
+"%PY%" -m pip --version >nul 2>&1
+if errorlevel 1 (
+    if defined RECREATED (
+        echo.
+        echo   [X] Could not get pip into the environment even after rebuilding it.
+        echo       Reinstall Python from https://www.python.org/downloads/ -- the
+        echo       python.org build includes pip; the Microsoft Store one may not.
+        goto :finish_fail
+    )
+    echo   still no pip -- the environment is broken. Rebuilding it from scratch.
+    echo   ^(your logins, database and link live in %HOME_DIR%\data and are kept^)
+    set "RECREATED=1"
+    rmdir /s /q "%VENV%"
+    goto :make_venv
+)
 echo   [1/4] environment ready
 
 rem ------------------------------------------------------------ install
@@ -142,3 +167,17 @@ echo.
 pause
 endlocal
 exit /b 1
+
+rem ---------------------------------------------------------- helpers
+:find_python
+rem  The first Python 3.10+ on PATH, into SYSPY. A subroutine because it is
+rem  needed twice: for a first environment, and to rebuild a broken one.
+set "SYSPY="
+for %%C in (python.exe py.exe python3.exe) do (
+    if not defined SYSPY (
+        for /f "delims=" %%P in ('where %%C 2^>nul') do (
+            if not defined SYSPY set "SYSPY=%%P"
+        )
+    )
+)
+goto :eof

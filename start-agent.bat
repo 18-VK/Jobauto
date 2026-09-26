@@ -53,6 +53,27 @@ if not exist "%PY%" (
     )
 )
 
+rem ------------------------------------------------------------- pip
+rem  A venv can exist without pip (Store Python, or a run that died half-way).
+rem  Bootstrap it before trying to install anything into it.
+"%PY%" -m pip --version >nul 2>&1
+if errorlevel 1 (
+    echo   pip is missing from the environment -- adding it ...
+    "%PY%" -m ensurepip --upgrade --default-pip >nul 2>&1
+)
+"%PY%" -m pip --version >nul 2>&1
+if errorlevel 1 (
+    curl.exe -fsSL https://bootstrap.pypa.io/get-pip.py -o "%TEMP%\get-pip.py"
+    if not errorlevel 1 "%PY%" "%TEMP%\get-pip.py" --quiet
+)
+"%PY%" -m pip --version >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo   [X] The environment has no pip and it could not be added.
+    echo       Run setup-agent.bat instead -- it rebuilds the environment.
+    goto :finish_fail
+)
+
 rem ------------------------------------------------------------ install
 if not exist "%EXE%" (
     echo   [1/3] installing jobauto from this folder ...

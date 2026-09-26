@@ -259,3 +259,46 @@ def test_installer_points_at_the_daily_schedule():
     script = installer.installer_script("https://x.example")
     assert "Run automatically" in script
     assert "Preferences" in script
+
+
+# ------------------------------------------ a venv is not an environment
+# "No module named pip" from a venv that exists: the Store and Debian-style
+# Pythons ship no ensurepip, and a venv left by a run that died half-way
+# looks the same. Every installer checked for python.exe and called the
+# environment ready. They check for pip itself now, and bootstrap it.
+def _bat(name):
+    from pathlib import Path
+    return (Path(__file__).resolve().parent.parent / name).read_text(encoding="utf-8")
+
+
+def test_setup_bat_checks_for_pip_not_just_python():
+    text = _bat("setup-agent.bat")
+    assert '-m pip --version' in text
+    assert '-m ensurepip --upgrade --default-pip' in text
+    assert 'bootstrap.pypa.io/get-pip.py' in text
+    # and rebuilds the environment as a last resort, exactly once
+    assert 'rmdir /s /q "%VENV%"' in text
+    assert 'if defined RECREATED' in text
+
+
+def test_setup_bat_finds_python_from_one_place():
+    """Needed twice -- first environment, and a rebuild -- so a subroutine,
+    not two copies that drift."""
+    text = _bat("setup-agent.bat")
+    assert text.count("call :find_python") == 1
+    assert ":find_python" in text and "goto :eof" in text
+
+
+def test_start_bat_bootstraps_pip_too():
+    text = _bat("start-agent.bat")
+    assert '-m ensurepip --upgrade --default-pip' in text
+    assert 'bootstrap.pypa.io/get-pip.py' in text
+
+
+def test_the_hosted_installer_bootstraps_pip_too():
+    script = installer.installer_script("https://x.example")
+    assert "-m pip --version" in script
+    assert "-m ensurepip --upgrade --default-pip" in script
+    assert "bootstrap.pypa.io/get-pip.py" in script
+    # the check happens before anything is installed into the venv
+    assert script.index("-m ensurepip") < script.index("pip install --quiet --upgrade pip")

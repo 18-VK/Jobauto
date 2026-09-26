@@ -162,6 +162,32 @@ if (-not (Test-Path $Py)) {
     if ($LASTEXITCODE -ne 0) { Write-Host '  could not create it.' -ForegroundColor Red; Finish 1 }
 }
 
+# A python.exe is not an environment. The Store and Debian-style Pythons ship
+# no ensurepip, so `python -m venv` leaves a venv with no pip in it, and the
+# install below fails with "No module named pip". Check for pip itself and
+# bootstrap it before installing anything.
+& $Py -m pip --version *> $null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host '  pip is missing from the environment -- adding it ...'
+    & $Py -m ensurepip --upgrade --default-pip *> $null
+    & $Py -m pip --version *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '  this Python has no ensurepip -- fetching pip from pypa.io ...'
+        $getpip = Join-Path $env:TEMP 'get-pip.py'
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile $getpip
+            & $Py $getpip --quiet
+        } catch { }
+        & $Py -m pip --version *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host '  could not get pip into the environment.' -ForegroundColor Red
+            Write-Host '  Reinstall Python from https://www.python.org/downloads/ -- that build'
+            Write-Host '  includes pip; the Microsoft Store one may not -- and run this again.'
+            Finish 1
+        }
+    }
+}
+
 Write-Host '  downloading the agent ...'
 $zip = Join-Path $env:TEMP 'jobauto-agent.zip'
 $dir = Join-Path $env:TEMP 'jobauto-agent-src'
