@@ -81,6 +81,20 @@
     </div>
   </div>
 
+  <!-- Bulk: tick what the filters show, queue it in one go, and start the
+       apply. Selection survives the list refreshing underneath it. -->
+  <div class="toolbar" id="bulk-bar">
+    <div class="filters">
+      <label><input type="checkbox" id="pick-all"> Select all shown</label>
+      <span class="muted" id="pick-count">nothing selected</span>
+    </div>
+    <div class="runners">
+      <button class="btn" id="btn-queue-selected" disabled>Queue selected</button>
+      <button class="btn btn-primary" id="btn-queue-apply" disabled>Queue selected &amp; apply</button>
+    </div>
+  </div>
+  <div id="bulk-msg" class="msg" hidden></div>
+
   <div id="jobs" class="cards"></div>
   <p class="empty" id="jobs-empty" hidden>
     No jobs yet. Hit <strong>Search portals</strong> — it runs on your PC and the

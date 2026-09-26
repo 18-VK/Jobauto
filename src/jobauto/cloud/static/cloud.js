@@ -92,13 +92,94 @@ async function loadJobs() {
   const sel = $('#f-portal');
   if (sel.options.length <= 1) portals.forEach((x) => sel.append(new Option(x, x)));
 
+  // Selection survives a refresh, but only for jobs still shown.
+  const shown = new Set(d.jobs.map((j) => j.id));
+  [...pickState].forEach((id) => { if (!shown.has(id)) pickState.delete(id); });
   d.jobs.forEach((job) => wrap.append(jobCard(job)));
+  updatePickBar();
+}
+
+/* --------------------------------------------------------- bulk queue */
+const pickState = new Set();
+
+function updatePickBar() {
+  const n = pickState.size;
+  const shown = document.querySelectorAll('.job-pick').length;
+  $('#pick-count').textContent = n ? `${n} selected` : 'nothing selected';
+  $('#pick-all').checked = shown > 0 && n === shown;
+  $('#pick-all').indeterminate = n > 0 && n < shown;
+  $('#btn-queue-selected').disabled = n === 0;
+  $('#btn-queue-apply').disabled = n === 0;
+}
+
+$('#pick-all').onchange = () => {
+  const on = $('#pick-all').checked;
+  document.querySelectorAll('.job-pick').forEach((box) => {
+    box.checked = on;
+    if (on) pickState.add(Number(box.value)); else pickState.delete(Number(box.value));
+  });
+  updatePickBar();
+};
+
+async function queueSelected() {
+  const ids = [...pickState];
+  const res = await api('/api/jobs/queue', { method: 'POST',
+                        body: JSON.stringify({ ids, queued: true }) });
+  pickState.clear();
+  loadJobs(); loadSummary();
+  return res;
+}
+
+$('#btn-queue-selected').onclick = async () => {
+  const btn = $('#btn-queue-selected');
+  btn.disabled = true;
+  try {
+    const res = await queueSelected();
+    showBulkMsg(`${res.queued} queued. Hit Apply to queued, or wait for the daily run.`, true);
+  } catch (e) { showBulkMsg(e.message, false); } finally { updatePickBar(); }
+};
+
+$('#btn-queue-apply').onclick = async () => {
+  const btn = $('#btn-queue-apply');
+  btn.disabled = true;
+  try {
+    const res = await queueSelected();
+    // No limit: the agent applies to everything queued. Daily caps still
+    // hold, and whatever it does not get to stays queued for next time.
+    await queueTask('apply', {});
+    showBulkMsg(`${res.queued} queued and the apply run ${agentOnline ? 'is starting on your PC' : 'will start when your PC is next online'}. Every application still waits for you to submit.`, true);
+  } catch (e) { showBulkMsg(e.message, false); } finally { updatePickBar(); }
+};
+
+function showBulkMsg(text, ok) {
+  const box = $('#bulk-msg');
+  box.className = 'msg ' + (ok ? 'ok' : 'bad');
+  box.textContent = text;
+  box.hidden = false;
+}
+
+/* The list changes from the other end -- the agent applies, jobs leave --
+   so while the Jobs tab is open it re-reads itself. Before this, an applied
+   job stayed on screen until the page was reloaded. */
+function refreshJobsView() {
+  const view = $('#view-jobs');
+  if (view && view.classList.contains('is-active')) loadJobs();
 }
 
 function jobCard(job) {
   const card = el('div', 'card');
 
   const head = el('div', 'card-head');
+  if (!job.applied) {
+    const pick = el('input');
+    pick.type = 'checkbox'; pick.className = 'job-pick'; pick.value = job.id;
+    pick.checked = pickState.has(job.id);
+    pick.onchange = () => {
+      if (pick.checked) pickState.add(job.id); else pickState.delete(job.id);
+      updatePickBar();
+    };
+    head.append(pick);
+  }
   const score = el('div', 'score ' + (job.band || ''));
   score.append(el('b', null, Number(job.score).toFixed(0)),
                el('span', null, job.band || 'score'));
@@ -1198,4 +1279,4 @@ $('#f-age').addEventListener('change', loadJobs);
 /* --------------------------------------------------------------- boot */
 loadSummary();
 loadJobs();
-setInterval(() => { loadSummary(); refreshPreferencesView(); }, 15000);
+setInterval(() => { loadSummary(); refreshPreferencesView(); refreshJobsView(); }, 15000);

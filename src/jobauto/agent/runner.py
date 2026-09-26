@@ -337,7 +337,7 @@ class LocalAgent:
             self.push_state(db, config)
         finally:
             if fps:
-                self.cloud.clear_queued_jobs(fps)
+                self.cloud.clear_queued_jobs(self._attempted(fps))
 
     # -------------------------------------------------------- decisions
     def settle_decisions(self, decided: list[dict]) -> int:
@@ -744,6 +744,26 @@ class LocalAgent:
         finally:
             self._say_status("working")
 
+    def _attempted(self, fingerprints: list[str]) -> list[str]:
+        """The queued jobs this run actually got to.
+
+        A queued apply used to clear the whole queue afterwards, including
+        jobs it never opened -- past a daily cap, on a portal that stopped
+        for a sign-in. They dropped out of the queue with no application to
+        show for it, which with thirty selected at once is most of them.
+        An attempt leaves an application row; only those are consumed. The
+        rest stay queued for the next run.
+        """
+        try:
+            db = Database()
+            try:
+                return [fp for fp in fingerprints
+                        if db.application_status(fp) is not None]
+            finally:
+                db.close()
+        except Exception:
+            return list(fingerprints)
+
     def _say_status(self, text: str) -> None:
         """Put a line under the online dot, so a sign-in window waiting on the
         PC is visible from the phone that added the portal."""
@@ -815,7 +835,7 @@ class LocalAgent:
             # the run marks jobs done that were never opened.
             if apply_task and queued_fps:
                 try:
-                    self.cloud.clear_queued_jobs(queued_fps)
+                    self.cloud.clear_queued_jobs(self._attempted(queued_fps))
                 except AgentError as exc:
                     self.log(f"  could not clear the queue: {exc}")
 

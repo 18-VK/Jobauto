@@ -279,6 +279,13 @@ Invariants with tests:
   empty.
 - Marking an application submitted/skipped moves the `CloudJob` too. They
   are separate rows joined by fingerprint.
+- `POST /api/jobs/queue` `{ids, queued}` **sets** (the per-job route
+  toggles), skips acted-on jobs, returns the queued total. The Jobs tab
+  re-reads itself every 15 s while open (`refreshJobsView`), and the
+  summary's `jobs` count uses the same acted-on rule as the list.
+- After a queued apply the agent clears **only the queued jobs that now
+  have an application row** (`LocalAgent._attempted`); the rest — past a
+  cap, on a portal that stopped — stay queued for the next run.
 
 ### The scheduled run
 

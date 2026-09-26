@@ -258,10 +258,17 @@ def create_app() -> Flask:
             uid = g.user.id
             _reap_stale_tasks(s, uid)
             _expire_queued_tasks(s, uid)
+            # The same rule as the jobs list: jobs nobody has acted on. The
+            # count used to include applied ones the list hides, so the tile
+            # said 40 over a list of 12.
+            acted_on = select(Application.fingerprint).where(
+                Application.user_id == uid,
+                Application.status.in_(_RETIRES_JOB_STATUSES))
             counts = {
                 "jobs": s.scalar(select(func.count(CloudJob.id))
                                  .where(CloudJob.user_id == uid,
-                                        CloudJob.dropped == False)) or 0,   # noqa: E712
+                                        CloudJob.dropped == False,          # noqa: E712
+                                        CloudJob.fingerprint.notin_(acted_on))) or 0,
                 "dropped": s.scalar(select(func.count(CloudJob.id))
                                     .where(CloudJob.user_id == uid,
                                            CloudJob.dropped == True)) or 0,  # noqa: E712
@@ -368,6 +375,36 @@ def create_app() -> Flask:
             job.state = "queued" if job.state != "queued" else "new"
             s.commit()
             return jsonify({"ok": True, "state": job.state})
+
+    @app.post("/api/jobs/queue")
+    @auth.login_required
+    def api_queue_jobs():
+        """Queue many at once: everything selected, or everything a filter
+        shows. Sets rather than toggles, so re-sending a list is harmless,
+        and skips jobs already acted on -- they belong to Applications."""
+        body = request.get_json(silent=True) or {}
+        ids = [int(i) for i in (body.get("ids") or []) if str(i).isdigit()][:500]
+        queued = bool(body.get("queued", True))
+        if not ids:
+            return jsonify({"ok": True, "changed": 0, "queued": 0})
+        with session() as s:
+            acted_on = {a.fingerprint for a in s.scalars(
+                select(Application).where(
+                    Application.user_id == g.user.id,
+                    Application.status.in_(_RETIRES_JOB_STATUSES))).all()}
+            changed = 0
+            for job in s.scalars(select(CloudJob).where(
+                    CloudJob.user_id == g.user.id, CloudJob.id.in_(ids))).all():
+                if job.fingerprint in acted_on:
+                    continue
+                want = "queued" if queued else "new"
+                if job.state != want:
+                    job.state = want
+                    changed += 1
+            s.commit()
+            total = s.scalar(select(func.count(CloudJob.id)).where(
+                CloudJob.user_id == g.user.id, CloudJob.state == "queued")) or 0
+            return jsonify({"ok": True, "changed": changed, "queued": total})
 
     @app.get("/api/applications")
     @auth.login_required
