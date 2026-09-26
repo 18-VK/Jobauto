@@ -214,10 +214,20 @@ phrase matches win.
 
 ### Dedupe
 
-`Job.fingerprint` hashes normalised title + company + city, stripping
-seniority words. Changing the recipe invalidates dedupe state in
-`data/jobauto.db`. Test data gotcha: "Backend Developer" and "Senior Backend
-Developer" at the same company collapse to one row.
+`Job.fingerprint` hashes `models.loose_key()`: title without seniority words,
+company without its legal form (`_COMPANY_NOISE`: pvt, ltd, private, limited,
+llp, inc …), first city. The normalisers are module functions so the
+fingerprint, `scripts/dedupe_cloud.py` and the local migration agree.
+**Changing the recipe requires `Database._rekey_fingerprints`** to handle
+it: it re-keys jobs/scores/sightings/applications on open and merges rows
+that collapse, so old applications still keep their jobs out of the
+shortlist. Cloud rows are not re-keyed; run `dedupe_cloud.py` there. Test
+data gotcha: "Backend Developer" and "Senior Backend Developer" at the same
+company collapse to one row, and so do "Acme" and "Acme Pvt Ltd".
+
+`Database.needs_attention()` returns only the latest row per (fingerprint,
+portal) — `record_application` inserts a row per attempt, and syncing all of
+them let an old status overwrite a newer one on the dashboard.
 
 ## Testing
 

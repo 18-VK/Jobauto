@@ -278,3 +278,28 @@ jobauto reset --yes --logins --unlink   # those too
 Stop the agent first (`Stop-Process -Name jobauto`); it holds the database
 open. Autostart brings it back within fifteen minutes, and its first poll syncs
 preferences down again.
+
+## Duplicates
+
+Two listings are the same job when their title (seniority words aside), their
+company (legal form aside) and their city match. That is what the fingerprint
+hashes. Rows written by older builds keyed "Acme" and "Acme Pvt Ltd" as two
+companies, so one posting could sit in the jobs list two or three times, and an
+application under one spelling did not keep the others out.
+
+On the PC the fix is automatic: the local database re-keys old rows the first
+time a current build opens it. In the cloud, run the merge:
+
+```powershell
+$env:DATABASE_URL = "postgresql://..."
+python scripts/dedupe_cloud.py          # dry run: prints every group, keep/remove per row
+python scripts/dedupe_cloud.py --yes    # merge them
+```
+
+For each group it keeps the row an application points at, else the queued
+one, else the best-scored, and carries the queued state across. Applications
+are merged per portal the same way, keeping the furthest-along status, and the
+survivor is pointed at the surviving job so it stays out of the jobs list.
+`--ignore-location` also folds the same role at the same company across cities;
+off by default, because a company listing one opening in three cities is
+sometimes three openings.

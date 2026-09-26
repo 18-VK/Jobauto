@@ -21,6 +21,38 @@ class WorkMode(str, Enum):
     UNKNOWN = "unknown"
 
 
+# ------------------------------------------------------------- identity
+# What makes two listings the same job. Kept as plain functions so the
+# fingerprint, the dedupe script and the migration that re-keys old rows
+# cannot disagree about it.
+_SENIORITY = re.compile(r"\b(sr|senior|jr|junior|lead|i{1,3}|\d+)\b")
+# The legal form a company name carries or drops depending on the portal.
+# "Acme", "Acme Pvt Ltd" and "Acme Private Limited" are one employer; before
+# this they were three jobs, and the same posting showed up three times.
+_COMPANY_NOISE = {"pvt", "private", "ltd", "limited", "llp", "llc", "inc",
+                  "incorporated", "corp", "corporation", "co", "plc", "pte",
+                  "gmbh", "p", "l", "the"}
+
+
+def normalise_title(title: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _SENIORITY.sub("", (title or "").lower()))
+
+
+def normalise_company(company: str | None) -> str:
+    words = re.findall(r"[a-z0-9]+", (company or "").lower())
+    kept = [w for w in words if w not in _COMPANY_NOISE]
+    return "".join(kept or words)
+
+
+def normalise_city(location: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (location or "").split(",")[0].lower())
+
+
+def loose_key(title: str | None, company: str | None, location: str | None) -> str:
+    """Title without seniority, company without its legal form, first city."""
+    return f"{normalise_title(title)}|{normalise_company(company)}|{normalise_city(location)}"
+
+
 class AppStatus(str, Enum):
     DISCOVERED = "discovered"      # seen in search results
     SCORED = "scored"              # run through the scorer
@@ -118,12 +150,8 @@ class Job:
     def fingerprint(self) -> str:
         """Stable cross-portal identity: same role at same company collapses
         into one row even when four portals list it."""
-        norm = lambda s: re.sub(r"[^a-z0-9]+", "", (s or "").lower())
-        title = re.sub(r"\b(sr|senior|jr|junior|lead|i{1,3}|\d+)\b", "",
-                       (self.title or "").lower())
-        city = (self.location or "").split(",")[0]
         return hashlib.sha256(
-            f"{norm(title)}|{norm(self.company)}|{norm(city)}".encode()
+            loose_key(self.title, self.company, self.location).encode()
         ).hexdigest()[:16]
 
     @property

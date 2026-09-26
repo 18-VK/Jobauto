@@ -155,6 +155,50 @@ class Database:
                     WHERE status = 'external'
                       AND COALESCE(error, '') NOT LIKE '%apply by hand%'""",
                 (stale,))
+        self._rekey_fingerprints()
+
+    def _rekey_fingerprints(self) -> int:
+        """Bring rows written under an older fingerprint recipe up to date.
+
+        The recipe changed to treat "Acme" and "Acme Pvt Ltd" as one company.
+        A row keyed under the old recipe would never match a job discovered
+        under the new one, so the same posting would come back as new -- and
+        its old application would no longer keep it out of the shortlist,
+        which is a re-apply waiting to happen. Every job is re-keyed from its
+        stored fields; where two old rows now collapse into one, the newer
+        job row goes and its scores, sightings and applications follow the
+        survivor. Returns the number of rows re-keyed.
+        """
+        rows = self._conn.execute(
+            "SELECT fingerprint, title, company, location, portal, portal_job_id, "
+            "url FROM jobs").fetchall()
+        moves: list[tuple[str, str]] = []
+        for r in rows:
+            fresh = Job(portal=r["portal"], portal_job_id=r["portal_job_id"],
+                        title=r["title"], company=r["company"], url=r["url"],
+                        location=r["location"] or "").fingerprint
+            if fresh != r["fingerprint"]:
+                moves.append((r["fingerprint"], fresh))
+        if not moves:
+            return 0
+        with self.tx() as c:
+            for old, new in moves:
+                exists = c.execute("SELECT 1 FROM jobs WHERE fingerprint = ?",
+                                   (new,)).fetchone()
+                if exists:
+                    c.execute("DELETE FROM jobs WHERE fingerprint = ?", (old,))
+                    c.execute("DELETE FROM scores WHERE fingerprint = ?", (old,))
+                else:
+                    c.execute("UPDATE jobs SET fingerprint = ? WHERE fingerprint = ?",
+                              (new, old))
+                    c.execute("UPDATE scores SET fingerprint = ? WHERE fingerprint = ?",
+                              (new, old))
+                c.execute("UPDATE OR IGNORE sightings SET fingerprint = ? "
+                          "WHERE fingerprint = ?", (new, old))
+                c.execute("DELETE FROM sightings WHERE fingerprint = ?", (old,))
+                c.execute("UPDATE applications SET fingerprint = ? WHERE fingerprint = ?",
+                          (new, old))
+        return len(moves)
 
     def close(self) -> None:
         self._conn.close()
@@ -363,10 +407,16 @@ class Database:
         person, so they are the last ones that should disappear quietly.
         """
         marks = ",".join("?" for _ in self.NEEDS_YOU_STATUSES)
+        # The latest row per job and portal, only. Every attempt inserts a
+        # row, so a job that failed on Monday and was prepared on Tuesday
+        # has two -- and pushing both let Monday's overwrite Tuesday's on the
+        # dashboard depending on which arrived last.
         return self._conn.execute(
             f"""SELECT a.*, s.total FROM applications a
                 LEFT JOIN scores s ON s.fingerprint = a.fingerprint
-                WHERE a.status IN ({marks})
+                WHERE a.id IN (SELECT MAX(id) FROM applications
+                               GROUP BY fingerprint, portal)
+                  AND a.status IN ({marks})
                 ORDER BY s.total DESC""", self.NEEDS_YOU_STATUSES).fetchall()
 
     # ------------------------------------------------------------- runs
