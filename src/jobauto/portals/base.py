@@ -345,6 +345,21 @@ class PortalAdapter(ABC):
         button = self.sel("apply", "instant_button")
         if not button:
             return False, "no apply selector configured for this portal"
+        # A job from a link-less feed: its address names the card, and the
+        # apply button that counts is the one inside that card -- the first
+        # on the page belongs to some other job.
+        card_no = re.search(r"#card-(\d+)$", job.url or "")
+        if card_no:
+            scope_sel = self.sel("search", "result_card")
+            scope = (self.page.locator(scope_sel).nth(int(card_no.group(1)))
+                     if scope_sel else self.page)
+            try:
+                scope.locator(button).first.click(timeout=8000)
+            except Exception as exc:
+                return False, self.explain_click_failure("apply", button, exc)
+            self.pace()
+            self.guard_challenge()
+            return True, ""
         try:
             self.page.locator(button).first.click(timeout=8000)
         except Exception as exc:

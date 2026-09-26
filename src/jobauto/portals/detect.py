@@ -175,8 +175,9 @@ class Detection:
     notes: list[str] = field(default_factory=list)
 
     def to_search(self) -> dict[str, Any]:
-        fields: dict[str, Any] = {"title": self.title,
-                                  "url": {"selector": self.link, "attr": "href"}}
+        fields: dict[str, Any] = {"title": self.title}
+        if self.link:
+            fields["url"] = {"selector": self.link, "attr": "href"}
         for name in ("company", "location", "salary", "posted", "experience"):
             if getattr(self, name):
                 fields[name] = getattr(self, name)
@@ -278,11 +279,41 @@ def _guess_fields(cards: list[_El], title_anchor: dict[int, _El]) -> dict[str, s
     return out
 
 
+_TITLE_CLASS_HINTS = ("title", "role", "designation", "heading", "position",
+                      "jobname", "job-name", "opportunity")
+
+
+def _title_nodes(root: _El) -> list[_El]:
+    """Title-shaped elements for a feed whose cards carry no job links.
+
+    Instahyre's opportunities page is one: each card is a box with a title
+    and buttons -- View, Interested -- and not a single <a href> to a job.
+    A heading, or an element whose class says title, with text the length of
+    a job title, stands in for the link.
+    """
+    out = []
+    for el in root.walk():
+        if el.tag == "a":
+            continue
+        classy = any(h in " ".join(el.classes).lower() for h in _TITLE_CLASS_HINTS)
+        if el.tag not in _HEADINGS and not classy:
+            continue
+        text = el.own() or el.text()
+        if 8 <= len(text) <= 150 and not any(
+                x.tag in _HEADINGS for x in el.walk()):
+            out.append(el)
+    return out
+
+
 def detect(html: str) -> Detection | None:
     """The card, the title link, and the fields around them -- or None if the
-    page has no repeating block with a job link in it."""
+    page has no repeating block with a job title in it."""
     root = _parse(html)
     anchors = _job_anchors(root)
+    linkless = False
+    if len(anchors) < MIN_CARDS:
+        anchors = _title_nodes(root)
+        linkless = True
     if len(anchors) < MIN_CARDS:
         return None
 
@@ -330,6 +361,24 @@ def detect(html: str) -> Detection | None:
     cards = list(members[(sel, depth)].values())
     title_anchor = anchor_of[(sel, depth)]
     titles = [title_anchor[id(c)] for c in cards if id(c) in title_anchor]
+    if linkless:
+        # The title is a heading, not a link: reach it by its own selector.
+        # A card with no href of its own opens on the feed page itself; the
+        # scraper gives it an address there and the apply step clicks inside
+        # the card rather than following a URL.
+        own = Counter(t.selector() for t in titles if t.selector())
+        title_sel = (own.most_common(1)[0][0] if own
+                     else Counter(t.tag for t in titles).most_common(1)[0][0])
+        det = Detection(result_card=sel, title=title_sel, link="",
+                        cards=len(cards), href_prefix="")
+        det.notes.append("cards carry no job links -- each job opens the feed "
+                         "page itself, and apply clicks inside the card")
+        on_page = sum(1 for e in root.walk() if e.selector() == sel)
+        if on_page > len(cards) * 1.5:
+            det.result_card = f"{sel}:has({title_sel})"
+        for name, value in _guess_fields(cards, title_anchor).items():
+            setattr(det, name, value)
+        return det
     prefix = _common_href_prefix(titles)
     title_sel = _title_selector(titles, prefix)
 

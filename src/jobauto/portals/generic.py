@@ -155,9 +155,14 @@ class ConfigDrivenAdapter(PortalAdapter):
             # Detection was tried on this page too. Its verdict is the more
             # useful one: a page with no repeating job list is not a page
             # whose selectors are stale, it is the wrong page.
+            saved = getattr(self, "saved_page", None)
             tried = ("; automatic detection found no repeating job list on "
-                     "the page either, so this is probably not a results "
-                     "page -- check the url_template")
+                     "the page either"
+                     + (f". The page as seen is saved at {saved} -- send that "
+                        f"file and the selectors can be written against it"
+                        if saved else
+                        ", so this is probably not a results page -- check "
+                        "the url_template"))
             if self.last_container_seen is False:
                 return (f"nothing matched search.results_container or "
                         f"search.result_card ({where}){self._landed()}. "
@@ -325,6 +330,10 @@ class ConfigDrivenAdapter(PortalAdapter):
             det = None
         self.last_detected = det
         if det is None:
+            # Save what was seen. "Found nothing" on a page that plainly has
+            # jobs on it is a page someone needs to look at, and asking for a
+            # separate dump run each time is friction that keeps it broken.
+            self._save_page_for_inspection()
             return
 
         search = det.to_search()
@@ -341,6 +350,16 @@ class ConfigDrivenAdapter(PortalAdapter):
             f"selectors for this run (card: {det.result_card}). Run "
             f"`jobauto dump --portal {self.id}` to see the YAML to keep.")
         yield from self._scrape_cards(cards, count, search["fields"])
+
+    def _save_page_for_inspection(self) -> None:
+        try:
+            from ..config import data_dir
+            out = data_dir() / "debug"
+            out.mkdir(parents=True, exist_ok=True)
+            (out / f"{self.id}.html").write_text(self.page.content(), encoding="utf-8")
+            self.saved_page = out / f"{self.id}.html"
+        except Exception:
+            self.saved_page = None
 
     def suggested_yaml(self) -> str:
         """The search block detection would put in this portal's file."""
@@ -368,9 +387,17 @@ class ConfigDrivenAdapter(PortalAdapter):
                     else:
                         values[name] = self.text_of(card, spec)
 
-                if not values.get("title") or not values.get("url"):
+                if not values.get("title"):
                     self.last_skipped += 1
                     continue
+                if not values.get("url"):
+                    if "url" in fields:
+                        self.last_skipped += 1
+                        continue
+                    # A feed whose cards carry no job link: the job's address
+                    # is this page plus which card it was, and the apply step
+                    # clicks inside that card.
+                    values["url"] = f"{self.page.url.split('#')[0]}#card-{i}"
 
                 url = values["url"]
                 if url.startswith("/"):

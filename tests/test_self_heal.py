@@ -143,14 +143,19 @@ def test_a_login_page_is_not_mined_for_cards():
     assert "sign-in page" in adapter.why_no_results()
 
 
-def test_a_page_with_no_job_list_says_it_is_the_wrong_page():
+def test_a_page_with_no_job_list_is_saved_and_the_diagnosis_says_where(tmp_path, monkeypatch):
+    """Detection found nothing either, so this is a page someone needs to
+    look at -- it is kept, and the message names the file to send."""
+    monkeypatch.setenv("JOBAUTO_DATA_DIR", str(tmp_path))
     page = _Page(html="<html><body><p>Welcome back</p></body></html>")
     adapter = _adapter(page)
     adapter.last_url = page.url
     assert list(adapter._scrape_page()) == []
     why = adapter.why_no_results()
     assert "stale" in why
-    assert "not a results page" in why
+    assert "detection found no repeating job list" in why
+    assert str(tmp_path / "debug" / "hirist.html") in why
+    assert "send that file" in why
 
 
 def test_the_pipeline_logs_the_adapter_notes(monkeypatch, tmp_path):
