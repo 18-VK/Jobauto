@@ -246,3 +246,35 @@ inspection:
 ```powershell
 python scripts/migrate_db.py --from "<cloud-url>" --to "sqlite:///local-copy.db"
 ```
+
+## Starting over
+
+Two halves, because the data lives in two places.
+
+**The cloud** -- jobs, applications, tasks, and if you ask, the account too.
+From the repo, with the database string from your Render or Supabase settings:
+
+```powershell
+$env:DATABASE_URL = "postgresql://...your connection string..."
+python scripts/reset_cloud.py            # dry run: shows the counts, removes nothing
+python scripts/reset_cloud.py --yes      # jobs, applications, tasks; keeps account + link + preferences
+python scripts/reset_cloud.py --yes --reset-preferences   # ...and preferences back to the defaults
+python scripts/reset_cloud.py --yes --everything          # accounts and agent links too
+```
+
+The default keeps your account, the agent token (so the PC stays linked) and
+your preferences, and clears the schedule's "already ran today" so the next
+poll starts a run. `--everything` removes the accounts as well: signup is open
+again at your site afterwards, and every PC must be linked afresh.
+
+**The PC** -- its own run history, page dumps and the synced preferences:
+
+```powershell
+jobauto reset            # dry run
+jobauto reset --yes      # keeps portal logins and the dashboard link
+jobauto reset --yes --logins --unlink   # those too
+```
+
+Stop the agent first (`Stop-Process -Name jobauto`); it holds the database
+open. Autostart brings it back within fifteen minutes, and its first poll syncs
+preferences down again.

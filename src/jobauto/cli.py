@@ -327,6 +327,74 @@ def cmd_detect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reset(args: argparse.Namespace) -> int:
+    """Wipe this PC's run history for a fresh start.
+
+    Removes the local database (jobs, scores, applications, cool-offs), the
+    page dumps, and the preferences the cloud synced down -- it sends them
+    again on the next poll. Keeps the portal logins and the link to the
+    dashboard unless told otherwise: those are the two things that take a
+    person to redo. The cloud's own data is separate; see
+    scripts/reset_cloud.py.
+    """
+    import shutil
+    from .config import CONFIG_DIR, data_dir
+
+    data = data_dir()
+    targets: list[tuple[str, Path]] = [
+        ("run history (jobs, applications, cool-offs)", data / "jobauto.db"),
+        ("page dumps", data / "debug"),
+        ("preferences synced from the cloud", CONFIG_DIR / "preferences.local.yaml"),
+        ("exported sessions file", data / "sessions.json"),
+    ]
+    if args.logins:
+        targets.append(("portal logins (browser profiles)", data / "browser"))
+    if args.unlink:
+        targets.append(("link to the dashboard", data / "agent.json"))
+
+    present = [(label, path) for label, path in targets if path.exists()]
+    print()
+    if not present:
+        print("  nothing to remove -- this PC is already clean\n")
+        return 0
+    for label, path in present:
+        print(f"  {'would remove' if not args.yes else 'removing':<13}{label}: {path}")
+    if not args.yes:
+        print("\n  dry run -- nothing removed. Add --yes to do it.")
+        if not args.logins:
+            print("  add --logins to remove the portal sign-ins too, --unlink to "
+                  "forget the dashboard")
+        print()
+        return 0
+
+    failed = []
+    for label, path in present:
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        except Exception as exc:
+            failed.append((label, exc))
+    if failed:
+        print()
+        for label, exc in failed:
+            print(f"  could not remove {label}: {type(exc).__name__}: {exc}")
+        print("  If the agent is running it holds the database open. Stop it "
+              "first:\n    Stop-Process -Name jobauto\n  then run this again. "
+              "Autostart brings it back within 15 minutes.")
+        print()
+        return 1
+    print("\n  done. The next agent poll syncs preferences down again and "
+          "starts fresh.")
+    if args.logins:
+        print(f"  sign in to each portal again: {invocation()} login")
+    if args.unlink:
+        print(f"  link this PC again: {invocation()} link --url=... --token=...")
+    print()
+    return 0
+
+
 def cmd_dump(args: argparse.Namespace) -> int:
     """Save what a portal's results page actually looks like, signed in.
 
@@ -755,6 +823,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="save it to config/portals/<id>.yaml")
     headless_arg(sp)
     sp.set_defaults(func=cmd_detect)
+
+    sp = sub.add_parser("reset", help="wipe this PC's run history for a fresh start")
+    sp.add_argument("--yes", action="store_true", help="actually remove; otherwise dry run")
+    sp.add_argument("--logins", action="store_true",
+                    help="also remove the portal sign-ins (browser profiles)")
+    sp.add_argument("--unlink", action="store_true",
+                    help="also forget the link to the dashboard")
+    sp.set_defaults(func=cmd_reset)
 
     sp = sub.add_parser("dump", help="save a portal's real results page "
                                      "for fixing selectors")

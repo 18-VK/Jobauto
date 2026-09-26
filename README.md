@@ -537,6 +537,8 @@ tasks still running.
 | `jobauto autostart` | Keep the agent running via Task Scheduler |
 | `jobauto autostart --status` | Why is the dashboard showing offline? |
 | `jobauto dump --portal hirist` | Save a portal's real results page under `data/debug/` -- for fixing selectors when a search finds nothing |
+| `jobauto reset --yes` | Fresh start on this PC: run history and synced preferences; add `--logins --unlink` to remove sign-ins and the dashboard link too |
+| `python scripts/reset_cloud.py --yes` | Fresh start in the cloud: jobs, applications, tasks; `--everything` for accounts too. See [docs/DATABASE.md](docs/DATABASE.md#starting-over) |
 | `jobauto detect --name Foundit --url URL --write` | Local-only version of Add a portal: works out the selectors from a search page and writes the portal file |
 | *Preferences → Portals* (dashboard) | Switch any portal off; nothing runs against it until it is back on. Syncs to your PC as `portals.disabled` in preferences |
 | *Preferences → Add a portal* (dashboard) | A name and the address of a search you ran. Your PC works out the selectors, checks the search and login pages, and reports back — step by step in [docs/ADDING-A-PORTAL.md](docs/ADDING-A-PORTAL.md) |
