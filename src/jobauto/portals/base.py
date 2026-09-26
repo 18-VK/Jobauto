@@ -348,7 +348,27 @@ class PortalAdapter(ABC):
         try:
             self.page.locator(button).first.click(timeout=8000)
         except Exception as exc:
-            return False, self.explain_click_failure("apply", button, exc)
+            # The shipped selector was never checked against the live site.
+            # Before blaming it, look at the page for the button that says
+            # apply -- the same self-heal the search results get -- and say
+            # what was used so the YAML can be fixed for good.
+            found = self._detect_apply_button()
+            if not found:
+                return False, (self.explain_click_failure("apply", button, exc)
+                               + " -- automatic detection found no apply "
+                                 "button on the page either; open the job in "
+                                 "a browser to check it can be applied to "
+                                 f"on {self.portal.name} at all")
+            try:
+                self.page.locator(found).first.click(timeout=8000)
+            except Exception as exc2:
+                return False, self.explain_click_failure("apply", found, exc2)
+            notes = getattr(self, "notes", None)
+            if notes is not None:
+                notes.append(
+                    f"apply.instant_button in config/portals/{self.id}.yaml "
+                    f"matched nothing, but the page has an apply button -- "
+                    f"using {found} for this run. Put that in the yaml to keep it.")
         self.pace()
 
         # A new tab means the apply button carried target="_blank", which on
@@ -429,6 +449,13 @@ class PortalAdapter(ABC):
             except Exception:
                 pass          # a tab that will not close must not stop the run
         return closed
+
+    def _detect_apply_button(self) -> str:
+        try:
+            from .detect import find_apply_button
+            return find_apply_button(self.page.content())
+        except Exception:
+            return ""
 
     def explain_click_failure(self, what: str, selector: str,
                               exc: Exception) -> str:

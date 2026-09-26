@@ -532,6 +532,71 @@ def looks_signed_out(html: str) -> bool:
     return has_login and not _SIGNED_IN_MARK.search(html)
 
 
+# ------------------------------------------------------ the apply button
+# Labels that mean "apply to this job". Checked as whole labels first, then
+# as a prefix, then anywhere -- "Apply Now" beats a link that merely mentions
+# applying somewhere in a sentence.
+_APPLY_EXACT = ("apply", "apply now", "easy apply", "quick apply", "apply for this job",
+                "apply on company site", "apply on company website", "i'm interested")
+# Labels that contain "apply" and are not the button: a state, a count, a
+# filter control, a re-application.
+_NOT_APPLY = ("applied", "application", "filter", "reapply", "re-apply", "apply to all",
+              "apply for jobs", "how to apply")
+
+
+def find_apply_button(html: str) -> str:
+    """The button that applies to the job on this page, as a selector.
+
+    Written for the case the shipped selector was guessed and the site
+    renders something else: find the control whose label says apply, and
+    reach it by a test id or id if it has one, otherwise by its exact label.
+    Exact, because "Apply filters" and "Applied" also contain the word.
+    """
+    root = _parse(html)
+    best: tuple[int, _El, str] | None = None
+    for el in root.walk():
+        is_button = el.tag in ("button", "a", "input") or el.attrs.get("role") == "button"
+        if not is_button:
+            continue
+        if el.tag == "input":
+            if (el.attrs.get("type") or "").lower() not in ("submit", "button"):
+                continue
+            label = el.attrs.get("value", "")
+        else:
+            label = el.text() or el.attrs.get("aria-label", "") or el.attrs.get("title", "")
+        label = re.sub(r"\s+", " ", label).strip()
+        low = label.lower()
+        if not low or len(low) > 40 or "apply" not in low:
+            continue
+        if any(bad in low for bad in _NOT_APPLY):
+            continue
+        score = 4 if low in _APPLY_EXACT else (3 if low.startswith("apply") else 1)
+        if el.tag == "button":
+            score += 1
+        if best is None or score > best[0]:
+            best = (score, el, label)
+    if best is None:
+        return ""
+
+    _, el, label = best
+    for attr in _TEST_ATTRS:
+        value = el.attrs.get(attr, "")
+        if value and '"' not in value and not _MINTED.search(value):
+            return f'{el.tag}[{attr}="{value}"]'
+    ident = el.attrs.get("id", "")
+    if ident and _STABLE_CLASS.match(ident) and not _MINTED.search(ident):
+        return f"#{ident}"
+    if el.tag == "input":
+        return f'input[value="{label}"]' if '"' not in label else 'input[type="submit"]'
+    tag = el.tag if el.tag in ("button", "a") else f'{el.tag}[role="button"]'
+    if '"' not in label:
+        # :text-is matches the whole label, whitespace-normalised, so "Apply"
+        # does not also mean "Apply filters" further down the page.
+        return f'{tag}:text-is("{label}")'
+    stable = el.stable_classes
+    return tag + "".join(f".{c}" for c in stable) if stable else tag
+
+
 # ------------------------------------------------------------ the URL
 def _variants(text: str) -> list[str]:
     t = text.strip()

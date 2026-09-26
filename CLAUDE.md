@@ -326,6 +326,16 @@ sets it to `_login_window` (`interactive_login`, `RUN_SIGNIN_MINUTES`, status
 pushed to the dashboard) and the CLI to `_attach_login_window`, both only
 when headed. `None` keeps the old "run `jobauto login`" message.
 
+### Self-healing apply button
+
+`PortalAdapter.open_application`: when `apply.instant_button` fails to
+click, `find_apply_button(page.content())` looks for the control labelled
+Apply / Apply Now / Easy Apply (`_APPLY_EXACT`, excluding `_NOT_APPLY` such as
+"Applied", "Apply filters"), preferring a test id or id and otherwise
+`:text-is("<label>")` (exact, so "Apply" ≠ "Apply filters"). It clicks that
+and appends a note naming the selector to keep. No button found → the
+diagnostic says so; that is usually a closed posting.
+
 ### Selector hygiene in detection
 
 `_MINTED` covers `css-`/`sc-`/`mui-style-`/`chakra-` prefixes, hex runs,
