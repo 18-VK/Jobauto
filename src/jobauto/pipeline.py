@@ -124,7 +124,8 @@ class Pipeline:
         self.db = db
         self.log = log
         self.scorer = Scorer(config.preferences, config.profile)
-        self.answerer = ScreeningAnswerer(config.profile)
+        self.answerer = ScreeningAnswerer(
+            config.profile, auto_answer=config.answer_screening_questions)
         # Workers log while they run, so the lines must not interleave
         # mid-sentence in the dashboard's live output.
         self._log_lock = threading.Lock()

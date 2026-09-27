@@ -3,7 +3,11 @@
 Portals ask the same dozen questions forever. `profile.screening_answers` holds
 your canned replies; this module matches a live question against them.
 
-Two rules that matter:
+Three rules that matter:
+  - canned answers are only typed in when
+    `preferences.application.answer_screening_questions` is true. It ships
+    false: every question is left blank for you, and the application waits
+    in the review list. The canned answers stay useful as a crib sheet;
   - anything matching `never_auto_answer` is ALWAYS escalated to you, even if a
     canned answer would otherwise match;
   - an unmatched question is left blank and escalated, never guessed. A wrong
@@ -34,17 +38,21 @@ def _norm(text: str) -> str:
 
 
 class ScreeningAnswerer:
-    def __init__(self, profile: dict[str, Any]):
+    def __init__(self, profile: dict[str, Any], auto_answer: bool = False):
         self.rules = profile.get("screening_answers", []) or []
         self.blocklist = [b.lower() for b in profile.get("never_auto_answer", []) or []]
+        # Off unless the preferences say otherwise: the same default the
+        # shipped file carries, so a caller that forgets the flag is safe.
+        self.auto_answer = bool(auto_answer)
 
     def is_sensitive(self, question: str) -> bool:
         q = (question or "").lower()
         return any(b in q for b in self.blocklist)
 
     def answer_for(self, question: str) -> str | None:
-        """Best canned answer, or None if nothing matches confidently."""
-        if self.is_sensitive(question):
+        """Best canned answer, or None if nothing matches confidently -- or
+        if answering is switched off, in which case every question is yours."""
+        if not self.auto_answer or self.is_sensitive(question):
             return None
 
         q = _norm(question)

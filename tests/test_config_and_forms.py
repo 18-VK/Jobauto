@@ -119,7 +119,9 @@ PROFILE = {
 
 @pytest.fixture
 def answerer() -> ScreeningAnswerer:
-    return ScreeningAnswerer(PROFILE)
+    # These tests cover the matching itself, so answering is switched on.
+    # test_leave_questions.py covers the shipped default, which is off.
+    return ScreeningAnswerer(PROFILE, auto_answer=True)
 
 
 def test_matches_known_question(answerer):

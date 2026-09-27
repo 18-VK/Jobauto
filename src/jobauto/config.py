@@ -140,6 +140,12 @@ class Config:
     def auto_submit(self) -> bool:
         return bool(self.application.get("auto_submit", False))
 
+    @property
+    def answer_screening_questions(self) -> bool:
+        """Whether canned answers are typed into screening questions. Off by
+        default: every question is left for the user to fill."""
+        return bool(self.application.get("answer_screening_questions", False))
+
     def enabled_portals(self) -> list[PortalConfig]:
         return [p for p in self.portals.values() if p.enabled]
 

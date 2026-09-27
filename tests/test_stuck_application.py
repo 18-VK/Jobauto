@@ -26,7 +26,7 @@ from .test_parallel_discover import make_config
 def _answerer() -> ScreeningAnswerer:
     return ScreeningAnswerer({
         "screening_answers": [{"match": ["q"], "answer": "yes"}],
-        "never_auto_answer": []})
+        "never_auto_answer": []}, auto_answer=True)
 
 
 def test_naukris_chatbot_stops_asking_when_time_runs_out():

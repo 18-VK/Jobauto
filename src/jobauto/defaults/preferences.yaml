@@ -105,6 +105,11 @@ application:
   # Changing this to true is a deliberate act -- read docs/RISKS.md first.
   auto_submit: false
 
+  # Screening questions are left blank for you to fill, even when a canned
+  # answer in profile.yaml would match. Set true to have those typed in;
+  # never_auto_answer and unmatched questions are still escalated to you.
+  answer_screening_questions: false
+
   daily_caps:                  # per portal, per day
     naukri: 25
     linkedin: 15

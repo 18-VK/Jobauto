@@ -419,6 +419,8 @@ function parseSearchProfileFromYaml(text) {
     salaryMin: get(/\n\s*minimum_acceptable_lpa:\s*(\d+(?:\.\d+)?)/) || '10',
     maxAgeDays: get(/\n\s*max_age_days:\s*(\d+)/) || '21',
     shortlist: shortlistMatch ? Number(shortlistMatch[1]) : 60,
+    // Kept as written so a quick-filter save does not flip a raw-YAML edit.
+    answerQuestions: /answer_screening_questions:\s*true/i.test(appSrc),
     activeStart: activeMatch ? activeMatch[1] : '8',
     activeEnd: activeMatch ? activeMatch[2] : '22',
     include: get(/\n\s*include:\s*\[(.*?)\]/s) || '',
@@ -512,6 +514,10 @@ function makeSearchYamlFromForm() {
 
   const shortlist = Math.max(0, Math.min(100, Number($('#threshold-shortlist').value || 60)));
 
+  // Not on the form: whatever the YAML says stays as it is. Off means every
+  // screening question is left blank for the user.
+  const answerQuestions = parseSearchProfileFromYaml($('#pref-yaml').value || '').answerQuestions ? 'true' : 'false';
+
   // The range is the filter; "your experience" is what the fit is scored
   // against. Keep them apart -- the midpoint of the range is not how many
   // years you have.
@@ -525,7 +531,7 @@ function makeSearchYamlFromForm() {
     search: `search:\n  roles:\n${roleYaml}\n  keywords:\n    include: [${include.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    exclude: [${exclude.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n  experience:\n    min_years: ${expMin}\n    max_years: ${expMax}\n    current_years: ${expCurrent}\n  locations:\n    preferred: [${locations.map((x) => `"${x.replace(/"/g, '\\"')}"`).join(', ')}]\n    acceptable: []\n    blocked: []\n    work_mode: [${modes.map((x) => `"${x}"`).join(', ')}]\n    relocate: false\n  compensation:\n    currency: "INR"\n    current_ctc_lpa: ${(Number($('#salary-min').value || 10))}\n    expected_ctc_lpa: ${(Number($('#salary-min').value || 10) + 4)}\n    minimum_acceptable_lpa: ${Number($('#salary-min').value || 10)}\n    negotiable: true\n  company:\n    blocked: []\n    preferred: []\n    exclude_staffing_agencies: false\n    min_employee_rating: 3.0\n  posting:\n    max_age_days: ${Math.max(1, Number($('#posting-max-age').value || 21))}\n    require_salary_disclosed: false`,
     scoring: `scoring:\n  weights:\n    title_match: 0.30\n    skill_overlap: 0.25\n    experience_fit: 0.15\n    location_fit: 0.15\n    compensation_fit: 0.10\n    company_quality: 0.05`,
     thresholds: `thresholds:\n  shortlist: ${shortlist}\n  auto_tailor: ${Math.max(shortlist + 10, 70)}\n  priority: ${Math.max(shortlist + 25, 85)}`,
-    application: `application:\n  auto_submit: false\n  daily_caps:\n    naukri: 25\n    linkedin: 15\n    indeed: 20\n    instahyre: 15\n    hirist: 15\n  pacing:\n    between_actions: [1.5, 4.0]\n    between_applications: [20, 75]\n    active_hours: [${start}, ${end}]\n  cooldown_days:\n    same_job: 3650\n    same_company: 30`
+    application: `application:\n  auto_submit: false\n  answer_screening_questions: ${answerQuestions}\n  daily_caps:\n    naukri: 25\n    linkedin: 15\n    indeed: 20\n    instahyre: 15\n    hirist: 15\n  pacing:\n    between_actions: [1.5, 4.0]\n    between_applications: [20, 75]\n    active_hours: [${start}, ${end}]\n  cooldown_days:\n    same_job: 3650\n    same_company: 30`
   };
 }
 

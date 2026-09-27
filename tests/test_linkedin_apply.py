@@ -64,7 +64,9 @@ class FakeWizard(LinkedInAdapter):
 
 @pytest.fixture
 def answerer():
-    return ScreeningAnswerer(PROFILE)
+    # The wizard-walking is under test here, so answering is switched on;
+    # the shipped default (off) is covered in test_leave_questions.py.
+    return ScreeningAnswerer(PROFILE, auto_answer=True)
 
 
 # --------------------------------------------------------- the regression

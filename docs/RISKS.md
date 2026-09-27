@@ -45,9 +45,12 @@ also where you catch the job that read well in the listing and badly in the JD.
 1. **`auto_submit: false` by default.** Every application stops for you.
 2. **`force_manual_submit` per portal.** LinkedIn can never auto-submit,
    whatever the global setting says.
-3. **Escalated questions block auto-submit.** Anything the answerer could not
-   confidently fill is left blank and flagged, and that application will not be
-   sent automatically even with `auto_submit: true`.
+3. **Screening questions are yours by default.** `answer_screening_questions`
+   ships `false`: every question is left blank and flagged, and the
+   application waits for you. Switched on, only a confident canned match is
+   typed in; anything else is still escalated, and an application with an
+   escalated question is never sent automatically even with
+   `auto_submit: true`.
 4. **Sensitive fields are never auto-filled.** Aadhaar, PAN, DOB, bank details
    — see `never_auto_answer` in `profile.yaml`.
 5. **Daily caps per portal**, defaulting well below what would look unusual.

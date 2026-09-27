@@ -36,8 +36,9 @@ phone or any laptop — **including when your PC is switched off**.
    experience, location, salary, company — and tells you *why* it scored that way
 3. **Filters out** the obvious nos: excluded keywords, blocked companies, stale
    postings, roles wanting far more experience than you have
-4. **Fills in** the application on the portal, answering the screening questions
-   it can and leaving blank the ones it can't
+4. **Fills in** the application on the portal. Screening questions are left
+   blank for you to answer (switch `answer_screening_questions` on to have your
+   canned answers typed in)
 5. **Stops.** You check it and press submit yourself
 6. **Tracks** everything, so you never apply to the same job twice
 
@@ -468,8 +469,12 @@ never_auto_answer:          # always escalated to you, whatever else matches
   - "bank"
 ```
 
-Anything unmatched is **left blank and flagged**, never guessed. A wrong
-screening answer on record is worse than no application.
+By default **none of these are typed in**: every screening question is left
+blank and the application waits in the review list for you to answer it. Set
+`application.answer_screening_questions: true` in `preferences.yaml` to have
+matching canned answers filled. Even then, anything unmatched is **left blank
+and flagged**, never guessed. A wrong screening answer on record is worse than
+no application.
 
 ### Running it daily on its own
 

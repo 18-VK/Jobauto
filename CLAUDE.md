@@ -225,10 +225,16 @@ only a Chrome holding *that* profile, never others.
 
 ### Screening answers
 
-[forms.py](src/jobauto/forms.py): anything matching `never_auto_answer`
-(Aadhaar, PAN, DOB, bank) is always escalated; an unmatched question is left
-blank and escalated, never guessed. Match confidence threshold 0.7; longer
-phrase matches win.
+[forms.py](src/jobauto/forms.py): canned answers are typed in only when
+`preferences.application.answer_screening_questions` is true, and it ships
+**false** — every question is left blank and escalated, so the application
+lands in the review list for the user (`test_screening_answers_ship_off`).
+`ScreeningAnswerer(profile, auto_answer=...)` defaults to off for the same
+reason; tests of the matching itself pass `auto_answer=True`. When on:
+anything matching `never_auto_answer` (Aadhaar, PAN, DOB, bank) is always
+escalated; an unmatched question is left blank and escalated, never guessed.
+Match confidence threshold 0.7; longer phrase matches win. The dashboard's
+quick-filter save re-emits the flag as the YAML had it.
 
 ### Dedupe
 
