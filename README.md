@@ -526,6 +526,7 @@ tasks still running.
 | `jobauto login` | Sign in to each portal by hand, once |
 | `jobauto discover` | Search and score. Applies to nothing |
 | `jobauto shortlist --why` | Ranked list with reasons |
+| `jobauto rescore` | Score every stored job again after editing preferences. No browser |
 | `jobauto apply --limit 5` | Fill applications, prompting before each |
 | `jobauto apply --dry-run` | Show what it would apply to, touch nothing |
 | `jobauto review` | Anything prepared but not sent |

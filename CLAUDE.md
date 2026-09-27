@@ -24,6 +24,7 @@ python -m jobauto doctor --clear-cooldown indeed   # retry a parked portal now
 python -m jobauto login --portal naukri   # one-time manual sign-in per portal
 python -m jobauto discover                # search + score; applies to nothing
 python -m jobauto shortlist --why         # ranked results with scoring reasons
+python -m jobauto rescore                 # re-score stored jobs after editing preferences
 python -m jobauto apply --dry-run         # show what would be applied to
 python -m jobauto apply --limit 5         # prepare 5, prompting before each submit
 python -m jobauto review                  # anything prepared but never sent
@@ -196,6 +197,23 @@ Hard filters drop a job outright; six weighted components produce 0–100 minus
 penalties. `ScoreBreakdown.reasons` is shown by `shortlist --why` — keep
 components explainable. Weights must sum to 1.0; `config.validate()` fails
 loudly at startup by design.
+
+`search.experience` holds two different things: `min_years`/`max_years` is
+a **filter** (a job whose stated band lies wholly outside it is dropped; a
+job stating no experience is kept) and `current_years` is what
+`_experience_fit` scores against. The dashboard's quick-filter form once
+wrote `current_years` as the midpoint of the range, so the two were
+conflated and the range itself was read by nothing.
+
+**Discovery only scores what a search returns.** A preference edit reaches
+jobs found earlier through `Pipeline.rescore()` (`jobauto rescore`, no
+browser), which the agent runs whenever `sync_preferences` takes a changed
+file. And since `push_state` only ever pushes jobs that qualify, it also
+sends `retracted_since` — recently scored jobs now dropped or below the
+threshold — to `POST /api/agent/jobs/retract`, which removes them from the
+cloud's Jobs list unless the user queued or applied to them. Without that
+retraction a job the cloud was told about last week outlived the filter
+that now rejects it.
 
 ### Credentials
 

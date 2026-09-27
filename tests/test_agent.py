@@ -40,6 +40,10 @@ class FakeCloud:
         self.calls.append(("clear", tuple(fingerprints)))
         return {"ok": True, "cleared": len(fingerprints)}
 
+    def retract_jobs(self, fingerprints):
+        self.calls.append(("retract", tuple(fingerprints)))
+        return {"ok": True, "removed": len(fingerprints)}
+
     def task_result(self, task_id, status, result, log=""):
         self.calls.append(("task_result", task_id, status))
         return {"ok": True}

@@ -37,6 +37,10 @@ STATE_SYNC_INTERVAL = 20
 # Must stay under the server's 3 minute online window, or an agent that is
 # merely backing off gets reported as offline.
 MAX_BACKOFF = 120
+# How far back push_state looks for jobs that no longer qualify. A rescore
+# after a preference change stamps every row, so it covers all of them; the
+# rest of the time it covers what the last few searches re-scored.
+RETRACT_WINDOW_HOURS = 48
 
 
 class AgentError(Exception):
@@ -105,6 +109,16 @@ class CloudClient:
         return self._call("POST", "/api/agent/jobs/clear",
                           json={"fingerprints": fingerprints})
 
+    def retract_jobs(self, fingerprints: list[str]) -> dict:
+        """Tell the cloud these jobs no longer qualify, so it drops them from
+        the Jobs list. It keeps any the user queued or applied to."""
+        out = {"ok": True, "removed": 0}
+        for i in range(0, len(fingerprints), 500):
+            res = self._call("POST", "/api/agent/jobs/retract",
+                             json={"fingerprints": fingerprints[i:i + 500]})
+            out["removed"] += res.get("removed", 0)
+        return out
+
     def task_progress(self, task_id: int, log: str, status: str = "") -> dict:
         return self._call("POST", f"/api/agent/tasks/{task_id}/progress",
                           json={"log": log, "status": status})
@@ -128,20 +142,21 @@ class LocalAgent:
         self._detect_attempted: dict[str, float] = {}
 
     # ------------------------------------------------------- preferences
-    def sync_preferences(self) -> None:
+    def sync_preferences(self) -> bool:
         """Cloud preferences win. They are written to preferences.local.yaml so
-        the local CLI and the agent always agree on what to search for."""
+        the local CLI and the agent always agree on what to search for.
+        Returns True when a changed file was taken."""
         data = self.cloud.preferences()
         stamp, text = data.get("updated"), data.get("yaml") or ""
         if not text or stamp == self._prefs_stamp:
-            return
+            return False
         try:
             parsed = yaml.safe_load(text)
             if not isinstance(parsed, dict):
                 raise ValueError("not a mapping")
         except Exception as exc:
             self.log(f"  cloud preferences are invalid, keeping local: {exc}")
-            return
+            return False
 
         target = CONFIG_DIR / "preferences.local.yaml"
         target.write_text(text, encoding="utf-8")
@@ -152,9 +167,29 @@ class LocalAgent:
             target.unlink(missing_ok=True)
             if (CONFIG_DIR / "preferences.yaml").exists():
                 self.log("  restored the shipped default preferences")
-            return
+            return False
         self._prefs_stamp = stamp
         self.log("  preferences synced from cloud")
+        return True
+
+    def rescore_and_push(self) -> None:
+        """Score every stored job against the freshly synced preferences and
+        tell the cloud which ones no longer qualify."""
+        try:
+            config = load_config()
+            db = Database()
+        except Exception as exc:
+            self.log(f"  rescoring skipped: {type(exc).__name__}: {exc}")
+            return
+        try:
+            counts = Pipeline(config, db, log=lambda *_: None).rescore()
+            self.log(f"  rescored {counts['rescored']} stored jobs against the "
+                     f"new preferences: {counts['shortlisted']} still qualify")
+            self.push_state(db, config)
+        except Exception as exc:
+            self.log(f"  rescoring failed: {type(exc).__name__}: {exc}")
+        finally:
+            db.close()
 
     # -------------------------------------------------------- uploading
     def push_state(self, db: Database, config: Config,
@@ -191,6 +226,17 @@ class LocalAgent:
             if not quiet:
                 self.log(f"  pushed {len(jobs)} jobs "
                          f"({res['added']} new, {res['updated']} updated)")
+
+        # The cloud only ever hears about jobs that qualify, so a job it was
+        # told about last week that a tightened filter now rejects would sit
+        # on the dashboard for good. Say which recently scored jobs no
+        # longer qualify; the cloud keeps any the user queued or applied to.
+        gone = db.retracted_since(min_score=threshold, hours=RETRACT_WINDOW_HOURS)
+        if gone:
+            res = self.cloud.retract_jobs(gone)
+            if not quiet and res.get("removed"):
+                self.log(f"  retracted {res['removed']} jobs that no longer "
+                         f"qualify")
 
         apps = [{
             "fingerprint": r["fingerprint"],
@@ -778,7 +824,11 @@ class LocalAgent:
             pass
 
     def tick(self) -> None:
-        self.sync_preferences()
+        # A changed filter must reach the jobs already found, not only the
+        # next search: rescore what is stored and retract what no longer
+        # qualifies, so the dashboard reflects the edit within a poll.
+        if self.sync_preferences():
+            self.rescore_and_push()
         # Detection first, so a portal added a moment ago is looked at on this
         # poll rather than after whatever task is queued.
         try:

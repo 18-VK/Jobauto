@@ -481,6 +481,21 @@ def cmd_dump(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rescore(args: argparse.Namespace) -> int:
+    """Score every stored job again. Discovery only scores what a search
+    returns, so an edited preference otherwise reaches new jobs only."""
+    cfg = _load()
+    db = Database()
+    try:
+        counts = Pipeline(cfg, db, log=lambda *_: None).rescore()
+        print(f"\n  rescored {counts['rescored']} stored jobs"
+              f"  |  shortlisted {counts['shortlisted']}"
+              f"  |  filtered out {counts['dropped']}\n")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_shortlist(args: argparse.Namespace) -> int:
     cfg = _load()
     db = Database()
@@ -837,6 +852,10 @@ def build_parser() -> argparse.ArgumentParser:
     portal_arg(sp)
     headless_arg(sp)
     sp.set_defaults(func=cmd_dump)
+
+    sp = sub.add_parser("rescore", help="score every stored job again after "
+                        "editing preferences; no browser")
+    sp.set_defaults(func=cmd_rescore)
 
     sp = sub.add_parser("shortlist", help="ranked list of scored jobs")
     sp.add_argument("--limit", type=int, default=25)

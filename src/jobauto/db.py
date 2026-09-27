@@ -264,6 +264,21 @@ class Database:
                  datetime.now().isoformat(timespec="seconds")),
             )
 
+    def all_jobs(self) -> list[sqlite3.Row]:
+        """Every stored job, for re-scoring against changed preferences."""
+        return self._conn.execute("SELECT * FROM jobs").fetchall()
+
+    def retracted_since(self, min_score: float, hours: int) -> list[str]:
+        """Fingerprints scored within the window that no longer qualify --
+        dropped by a hard filter or under the threshold. What the agent tells
+        the cloud to forget, since it only ever pushes what qualifies."""
+        cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
+        rows = self._conn.execute(
+            """SELECT fingerprint FROM scores
+                WHERE scored_at >= ? AND (dropped = 1 OR total < ?)""",
+            (cutoff, min_score)).fetchall()
+        return [r["fingerprint"] for r in rows]
+
     def shortlist(self, min_score: float = 0, limit: int = 50,
                   exclude_applied: bool = True) -> list[sqlite3.Row]:
         sql = """

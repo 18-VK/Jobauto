@@ -333,6 +333,31 @@ class Pipeline:
                  f"{counts['dropped']} filtered out")
         return counts
 
+    def rescore(self) -> dict[str, int]:
+        """Score every stored job again against the current preferences.
+
+        Discovery only scores what a search returns, so after the preferences
+        change a job found last week keeps last week's score -- and stays on
+        the dashboard however badly it fits now. No browser, no network."""
+        cooldown = int(self.config.application.get("cooldown_days", {})
+                       .get("same_company", 30))
+        applied_companies = self.db.companies_applied_since(cooldown)
+        counts = {"rescored": 0, "shortlisted": 0, "dropped": 0}
+        for row in self.db.all_jobs():
+            job = _job_from_row(row)
+            score = self.scorer.score(job, applied_companies)
+            band = self.scorer.band(score.total)
+            self.db.save_score(job.fingerprint, score, band)
+            counts["rescored"] += 1
+            if score.dropped:
+                counts["dropped"] += 1
+            elif band != "below":
+                counts["shortlisted"] += 1
+        self.log(f"rescored {counts['rescored']} jobs: "
+                 f"{counts['shortlisted']} shortlisted, "
+                 f"{counts['dropped']} filtered out")
+        return counts
+
     def _ingest(self, job: Job, applied_companies: set[str],
                 counts: dict[str, int], portal_id: str = "") -> None:
         fresh = not self.db.job_exists(job.fingerprint)

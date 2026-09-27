@@ -23,6 +23,11 @@ def _tokens(s: str) -> set[str]:
     return {t for t in _norm(s).split() if len(t) > 1}
 
 
+def _years(value: Any) -> str:
+    """'2', '6.5' or '?' for a bound that is not configured."""
+    return "?" if value is None else f"{float(value):g}"
+
+
 class Scorer:
     def __init__(self, preferences: dict[str, Any], profile: dict[str, Any]):
         self.prefs = preferences
@@ -60,6 +65,13 @@ class Scorer:
                 and not job.salary.disclosed:
             return True, "salary not disclosed"
 
+        # The experience range is a filter, as the dashboard labels it: a
+        # job whose stated band lies wholly outside it is dropped. A job that
+        # states no experience is kept -- there is nothing to filter on.
+        dropped, why = self._outside_experience_range(job)
+        if dropped:
+            return True, why
+
         # A job demanding far more experience than you have is not a near-miss,
         # it is a wasted application slot.
         cur = self.search.get("experience", {}).get("current_years")
@@ -70,6 +82,18 @@ class Scorer:
                     f"you have {cur}y"
                 )
 
+        return False, ""
+
+    def _outside_experience_range(self, job: Job) -> tuple[bool, str]:
+        exp = self.search.get("experience", {}) or {}
+        lo_pref, hi_pref = exp.get("min_years"), exp.get("max_years")
+        lo, hi = job.experience.min_years, job.experience.max_years
+        if hi_pref is not None and lo is not None and lo > float(hi_pref):
+            return True, (f"requires {lo:g}y minimum, your range is "
+                          f"{_years(lo_pref)}-{float(hi_pref):g}y")
+        if lo_pref is not None and hi is not None and hi < float(lo_pref):
+            return True, (f"caps at {hi:g}y, your range is "
+                          f"{float(lo_pref):g}-{_years(hi_pref)}y")
         return False, ""
 
     # ----------------------------------------------------------- components

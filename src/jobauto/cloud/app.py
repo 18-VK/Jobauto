@@ -878,6 +878,36 @@ def create_app() -> Flask:
             s.commit()
             return jsonify({"ok": True, "cleared": cleared})
 
+    @app.post("/api/agent/jobs/retract")
+    @auth.agent_required
+    def agent_retract_jobs():
+        """The PC re-scored these and they no longer qualify -- a filter was
+        tightened, or a fresh search read the posting differently. Remove
+        them from the Jobs list, except any the user queued or applied to:
+        those are the user's, whatever the score says now."""
+        body = request.get_json(silent=True) or {}
+        fps = [str(p)[:32] for p in (body.get("fingerprints") or [])
+               if str(p).strip()]
+        if not fps:
+            return jsonify({"ok": True, "removed": 0})
+        if len(fps) > 2000:
+            return jsonify({"error": "too many fingerprints in one call"}), 413
+
+        uid = g.agent.user_id
+        with session() as s:
+            acted_on = select(Application.fingerprint).where(
+                Application.user_id == uid,
+                Application.status.in_(_RETIRES_JOB_STATUSES))
+            doomed = s.scalars(select(CloudJob).where(
+                CloudJob.user_id == uid,
+                CloudJob.fingerprint.in_(fps),
+                CloudJob.state != "queued",
+                CloudJob.fingerprint.notin_(acted_on))).all()
+            for job in doomed:
+                s.delete(job)
+            s.commit()
+        return jsonify({"ok": True, "removed": len(doomed)})
+
     @app.post("/api/agent/jobs")
     @auth.agent_required
     def agent_push_jobs():
