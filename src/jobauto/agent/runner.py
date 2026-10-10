@@ -48,7 +48,10 @@ class AgentError(Exception):
 
 
 class CloudClient:
-    def __init__(self, base_url: str, token: str, timeout: int = 30):
+    # A free Render instance sleeps after idling and takes up to a minute to
+    # answer its first request. A 30s timeout turned every wake-up into
+    # "cannot reach ... ReadTimeout" and skipped the start-up sync.
+    def __init__(self, base_url: str, token: str, timeout: int = 90):
         self.base = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
@@ -894,27 +897,45 @@ class LocalAgent:
                 except AgentError as exc:
                     self.log(f"  could not clear the queue: {exc}")
 
+    def _startup_sync(self) -> bool:
+        """Push what the local DB already holds. False when the cloud could
+        not be reached, so the caller tries again next pass."""
+        try:
+            config = load_config()
+            db = Database()
+        except Exception as exc:
+            self.log(f"  initial sync skipped: {type(exc).__name__}: {exc}")
+            return True          # a local problem; retrying will not help
+        try:
+            self.push_state(db, config)
+            return True
+        except AgentError as exc:
+            self.log(f"  initial sync postponed, the cloud is not answering "
+                     f"yet ({exc}); trying again next poll")
+            return False
+        except Exception as exc:
+            self.log(f"  initial sync skipped: {type(exc).__name__}: {exc}")
+            return True
+        finally:
+            db.close()
+
     def run_forever(self) -> None:
         info = self.cloud.hello("starting")
         self.log(f"\n  connected to {self.cloud.base} as {info.get('user')}")
         self.log(f"  polling every {self.interval}s -- Ctrl-C to stop\n")
 
         # An immediate push means the dashboard has data even before the first
-        # discover, if the local DB already has history.
-        try:
-            config = load_config()
-            db = Database()
-            try:
-                self.push_state(db, config)
-            finally:
-                db.close()
-        except Exception as exc:
-            self.log(f"  initial sync skipped: {type(exc).__name__}: {exc}")
+        # discover, if the local DB already has history. When the cloud is
+        # still waking up it is tried again on the next pass, not forgotten:
+        # nothing else pushes until a task runs, which may be hours away.
+        synced = self._startup_sync()
 
         backoff = self.interval
         while True:
             status = "idle"
             try:
+                if not synced:
+                    synced = self._startup_sync()
                 self.tick()
                 backoff = self.interval
             except KeyboardInterrupt:

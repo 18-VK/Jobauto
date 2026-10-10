@@ -356,6 +356,13 @@ inherits neither that nor cwd). `jobauto link` registers it; the hosted
 installer does too. `autostart --status` translates exit codes and reports
 whether the cloud schedule is even switched on.
 
+**A free Render instance sleeps** and takes up to a minute to answer its
+first request. `CloudClient` therefore times out at 90s, and the agent's
+start-up push (`_startup_sync`) is retried on the next pass when the cloud
+could not be reached — nothing else pushes until a task runs. A log line
+`initial sync postponed, the cloud is not answering yet` is the wake-up,
+not a fault.
+
 Stuck-task reapers in `cloud/app.py` (`_reap_orphaned_tasks`,
 `_reap_stale_tasks`, `_expire_queued_tasks`) only touch `running` tasks or
 `queued` ones older than 24h, so a future-dated interval batch is safe.
