@@ -97,10 +97,14 @@ class CloudClient:
         return out
 
     def push_applications(self, apps: list[dict]) -> dict:
-        if not apps:
-            return {"ok": True, "count": 0}
-        return self._call("POST", "/api/agent/applications",
-                          json={"applications": apps})
+        # Modest batches, as for jobs: one request carrying every pending
+        # application the PC has ever had was the one that timed out.
+        out = {"ok": True, "count": 0}
+        for i in range(0, len(apps), 200):
+            res = self._call("POST", "/api/agent/applications",
+                             json={"applications": apps[i:i + 200]})
+            out["count"] += res.get("count", 0)
+        return out
 
     def report_detected(self, portal_id: str, payload: dict) -> dict:
         return self._call("POST", f"/api/agent/portals/{portal_id}/detected",

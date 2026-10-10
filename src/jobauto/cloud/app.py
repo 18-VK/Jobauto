@@ -966,17 +966,28 @@ def create_app() -> Flask:
     def agent_push_applications():
         body = request.get_json(silent=True) or {}
         rows = body.get("applications") or []
+        if len(rows) > 500:
+            return jsonify({"error": "too many applications in one push"}), 413
         uid = g.agent.user_id
         with session() as s:
+            # Two queries for the batch, not two per row: the database is a
+            # network hop away, and a push of a few hundred pending
+            # applications took longer than the agent was willing to wait.
+            fps = {(row.get("fingerprint") or "")[:32] for row in rows}
+            existing = {(a.fingerprint, a.portal): a for a in s.scalars(
+                select(Application).where(Application.user_id == uid,
+                                          Application.fingerprint.in_(fps))).all()}
+            jobs = {j.fingerprint: j for j in s.scalars(
+                select(CloudJob).where(CloudJob.user_id == uid,
+                                       CloudJob.fingerprint.in_(fps))).all()}
             for row in rows:
                 fp = (row.get("fingerprint") or "")[:32]
-                item = s.scalar(select(Application).where(
-                    Application.user_id == uid,
-                    Application.fingerprint == fp,
-                    Application.portal == row.get("portal", "")))
+                portal = row.get("portal", "")[:40]
+                item = existing.get((fp, portal))
                 if item is None:
-                    item = Application(user_id=uid, fingerprint=fp)
+                    item = Application(user_id=uid, fingerprint=fp, portal=portal)
                     s.add(item)
+                    existing[(fp, portal)] = item
 
                 # A decision you made in the browser is final. The agent
                 # re-pushes everything still 'prepared' in its local database
@@ -1003,8 +1014,7 @@ def create_app() -> Flask:
                 # and failed or hand-off states are also finished with in the
                 # jobs list entirely -- they live in Applications now, where
                 # the follow-up action is shown.
-                job = s.scalar(select(CloudJob).where(
-                    CloudJob.user_id == uid, CloudJob.fingerprint == fp))
+                job = jobs.get(fp)
                 if job is not None:
                     if item.status in ("external", "failed"):
                         job.state = item.status
