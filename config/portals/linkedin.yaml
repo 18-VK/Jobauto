@@ -53,4 +53,27 @@ apply:
   closed_notice: ".jobs-details-top-card__apply-error, .artdeco-inline-feedback--error, :has-text('No longer accepting applications')"
   question_container: ".jobs-easy-apply-form-section__grouping"
   question_text: "label"
+  # Labels on the contact and resume panes: your own profile data, which
+  # LinkedIn fills in itself. Every other label is a screening question, and
+  # the wizard stops on its pane rather than clicking Next -- Next would
+  # accept whatever LinkedIn pre-filled from your earlier applications.
+  # Matched as lower-case substrings.
+  profile_fields:
+    - "email"
+    - "phone"
+    - "mobile"
+    - "country code"
+    - "first name"
+    - "last name"
+    - "city"
+    - "location"
+    - "address"
+    - "resume"
+    - "cv"
+    - "cover letter"
+    - "upload"
+    - "headline"
+    - "summary"
+    - "photo"
+    - "follow"
   success_indicator: ".artdeco-inline-feedback--success, .jobs-post-apply"

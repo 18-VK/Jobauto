@@ -159,7 +159,8 @@ class LinkedInAdapter(ConfigDrivenAdapter):
                 combined.note = self.left_for_you(
                     f"Easy Apply was still on step {step + 1} when time ran out")
                 return combined
-            result = answerer.answer_all(self.read_questions())
+            questions = self.screening_questions(self.read_questions())
+            result = answerer.answer_all(questions)
             combined.answered.update(result.answered)
             for question in result.escalated:
                 if question not in combined.escalated:
@@ -170,6 +171,17 @@ class LinkedInAdapter(ConfigDrivenAdapter):
                     self.answer(text)
                 except Exception:
                     break
+
+            # A pane with a question nobody answered is the user's. Clicking
+            # Next there does not leave it blank: LinkedIn pre-fills screening
+            # answers from earlier applications, and Next accepts them -- the
+            # "agent filled it wrong" the user saw.
+            if result.escalated:
+                combined.note = self.left_for_you(
+                    f"Easy Apply step {step + 1} asks "
+                    f"{len(result.escalated)} screening question(s), "
+                    f"not filled")
+                return combined
 
             state = self.advance()
             if state == "ready":
@@ -187,6 +199,34 @@ class LinkedInAdapter(ConfigDrivenAdapter):
                          f"reaching a submit button -- not submitted. Apply "
                          f"for this one on LinkedIn directly")
         return combined
+
+    # Radio captions, not questions: the question is the group's own label.
+    _OPTION_CAPTIONS = {"yes", "no"}
+
+    def screening_questions(self, labels: list[str]) -> list[str]:
+        """The labels on a pane that are real screening questions.
+
+        Easy Apply's form groups label your contact details the same way
+        they label questions, so "Mobile phone number" read as a question and
+        an unanswered one would stop every application on its first pane.
+        A label is profile data when it names one of `apply.profile_fields`
+        and is short and not phrased as a question -- "Are you willing to
+        relocate to this location?" is a question however it is worded.
+        """
+        raw = getattr(self.portal, "raw", None) or {}
+        fields = [str(f).lower() for f in
+                  ((raw.get("apply") or {}).get("profile_fields") or [])]
+        out: list[str] = []
+        for label in labels:
+            text = " ".join((label or "").split())
+            low = text.lower().rstrip("*").strip()
+            if not low or low in self._OPTION_CAPTIONS:
+                continue
+            is_profile = (len(low) <= 40 and not low.endswith("?")
+                          and any(f in low for f in fields))
+            if not is_profile and text not in out:
+                out.append(text)
+        return out
 
     def read_questions(self) -> list[str]:
         sel = self.sel("apply", "question_text")

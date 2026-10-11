@@ -236,6 +236,18 @@ escalated; an unmatched question is left blank and escalated, never guessed.
 Match confidence threshold 0.7; longer phrase matches win. The dashboard's
 quick-filter save re-emits the flag as the YAML had it.
 
+**Leaving a question blank is not enough on LinkedIn.** Easy Apply pre-fills
+screening answers from the user's earlier applications, so clicking Next on
+a question pane accepts LinkedIn's guess. `LinkedInAdapter.fill_application`
+therefore stops on the first pane with an escalated question, without
+advancing, and hands it back with `left_for_you` → `prepared` → Pending.
+`question_text` is a bare `label`, which also matches the contact pane, so
+`screening_questions()` drops labels naming one of
+`apply.profile_fields` (in `linkedin.yaml`) — but only when short and not
+ending in "?", so "willing to relocate to this location?" stays a question.
+A missing list fails safe: every pane stops. Pinned by
+`tests/test_questions_left_for_user.py`.
+
 ### Dedupe
 
 `Job.fingerprint` hashes `models.loose_key()`: title without seniority words,
