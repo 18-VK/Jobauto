@@ -75,6 +75,19 @@ async function loadSummary() {
 }
 
 /* --------------------------------------------------------------- jobs */
+// The agent's "pushed 182 jobs" counts jobs already in Applications too; the
+// list leaves those out. Say so, or the gap reads as lost data.
+function showJobsWhy(b, shown) {
+  const line = $('#jobs-why');
+  if (!b || !b.held) { line.hidden = true; return; }
+  const parts = [`${shown} shown of ${b.held} held`];
+  if (b.in_applications) parts.push(`${b.in_applications} already in Applications`);
+  if (b.below_threshold) parts.push(`${b.below_threshold} queued below your threshold of ${b.threshold}`);
+  if (shown < b.listed) parts.push(`${b.listed - shown} more not shown by the current filters or the page limit`);
+  line.textContent = parts.join(' · ');
+  line.hidden = false;
+}
+
 async function loadJobs() {
   const p = new URLSearchParams();
   if ($('#f-min').value) p.set('min_score', $('#f-min').value);
@@ -87,6 +100,7 @@ async function loadJobs() {
   const wrap = $('#jobs');
   wrap.innerHTML = '';
   $('#jobs-empty').hidden = d.jobs.length > 0;
+  showJobsWhy(d.breakdown, d.jobs.length);
 
   const portals = [...new Set(d.jobs.map((j) => j.portal))];
   const sel = $('#f-portal');

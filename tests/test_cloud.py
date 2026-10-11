@@ -164,7 +164,9 @@ def test_agent_push_and_browser_read(client):
          "salary": "14-22 LPA", "score": 91.0, "band": "priority",
          "reasons": ["title match"]},
     ]})
-    assert res.get_json() == {"ok": True, "added": 1, "updated": 0}
+    body = res.get_json()
+    assert (body["ok"], body["added"], body["updated"]) == (True, 1, 0)
+    assert body["breakdown"]["listed"] == 1
 
     jobs = client.get("/api/jobs").get_json()["jobs"]
     assert len(jobs) == 1

@@ -350,8 +350,9 @@ def create_app() -> Flask:
                 stmt = stmt.where(CloudJob.fingerprint.notin_(applied))
 
             jobs = s.scalars(stmt).all()
+            breakdown = _jobs_breakdown(s, g.user.id)
 
-            return jsonify({"jobs": [{
+            return jsonify({"breakdown": breakdown, "jobs": [{
                 "id": j.id,
                 "fingerprint": j.fingerprint,
                 "title": j.title,
@@ -957,9 +958,12 @@ def create_app() -> Flask:
             # pushed by an older agent or scored before the threshold was
             # raised. Gone unless the user queued them or applied to them --
             # those are the user's, whatever the score.
-            _drop_below_threshold(s, g.agent.user_id)
+            removed = _drop_below_threshold(s, g.agent.user_id)
+            breakdown = _jobs_breakdown(s, g.agent.user_id)
         auth.touch_agent(g.agent.id, f"pushed {len(rows)} jobs")
-        return jsonify({"ok": True, "added": added, "updated": updated})
+        return jsonify({"ok": True, "added": added, "updated": updated,
+                        "removed_below_threshold": removed,
+                        "breakdown": breakdown})
 
     @app.post("/api/agent/applications")
     @auth.agent_required
@@ -1354,6 +1358,29 @@ def _shortlist_threshold(user: User | None) -> float:
         return float(value if value is not None else 60)
     except Exception:
         return 60.0
+
+
+def _jobs_breakdown(s, user_id: int) -> dict:
+    """Where this user's job rows are: listed, or why not.
+
+    The agent logs "pushed 182 jobs" and the Jobs tab shows 19; without the
+    split the gap reads as lost data. Same rules as the list and the tile."""
+    threshold = _shortlist_threshold(s.get(User, user_id))
+    acted_on = select(Application.fingerprint).where(
+        Application.user_id == user_id,
+        Application.status.in_(_RETIRES_JOB_STATUSES))
+    mine = CloudJob.user_id == user_id
+    live = CloudJob.dropped == False                                  # noqa: E712
+    count = lambda *where: s.scalar(select(func.count(CloudJob.id)).where(mine, *where)) or 0
+    return {
+        "held": count(),
+        "listed": count(live, CloudJob.score >= threshold,
+                        CloudJob.fingerprint.notin_(acted_on)),
+        "in_applications": count(CloudJob.fingerprint.in_(acted_on)),
+        "below_threshold": count(live, CloudJob.score < threshold,
+                                 CloudJob.fingerprint.notin_(acted_on)),
+        "threshold": threshold,
+    }
 
 
 def _drop_below_threshold(s, user_id: int) -> int:

@@ -88,12 +88,16 @@ class CloudClient:
 
     def push_jobs(self, jobs: list[dict]) -> dict:
         # Free Postgres tiers are happier with modest batches.
-        out = {"added": 0, "updated": 0}
+        out: dict = {"added": 0, "updated": 0, "removed_below_threshold": 0}
         for i in range(0, len(jobs), 200):
             chunk = jobs[i:i + 200]
             res = self._call("POST", "/api/agent/jobs", json={"jobs": chunk})
             out["added"] += res.get("added", 0)
             out["updated"] += res.get("updated", 0)
+            out["removed_below_threshold"] += res.get("removed_below_threshold", 0)
+            # The state after the last chunk is the state of the list.
+            if res.get("breakdown"):
+                out["breakdown"] = res["breakdown"]
         return out
 
     def push_applications(self, apps: list[dict]) -> dict:
@@ -233,6 +237,7 @@ class LocalAgent:
             if not quiet:
                 self.log(f"  pushed {len(jobs)} jobs "
                          f"({res['added']} new, {res['updated']} updated)")
+                self.log(_where_they_went(res))
 
         # The cloud only ever hears about jobs that qualify, so a job it was
         # told about last week that a tightened filter now rejects would sit
@@ -904,6 +909,15 @@ class LocalAgent:
     def _startup_sync(self) -> bool:
         """Push what the local DB already holds. False when the cloud could
         not be reached, so the caller tries again next pass."""
+        # Preferences first, so this push uses the cloud's threshold. Pushing
+        # with a stale local one sent jobs the cloud then deleted as below
+        # its threshold -- re-added as "new" on every start.
+        try:
+            took = self.sync_preferences()
+        except AgentError as exc:
+            self.log(f"  initial sync postponed, the cloud is not answering "
+                     f"yet ({exc}); trying again next poll")
+            return False
         try:
             config = load_config()
             db = Database()
@@ -911,6 +925,10 @@ class LocalAgent:
             self.log(f"  initial sync skipped: {type(exc).__name__}: {exc}")
             return True          # a local problem; retrying will not help
         try:
+            # Preferences may have changed while this PC was off; stored
+            # scores would otherwise reflect whatever was in force then.
+            if took:
+                Pipeline(config, db, log=lambda *_: None).rescore()
             self.push_state(db, config)
             return True
         except AgentError as exc:
@@ -965,6 +983,26 @@ class LocalAgent:
 
             # Jitter keeps many agents from hammering a free tier in lockstep.
             time.sleep(backoff + random.uniform(0, 3))
+
+
+def _where_they_went(res: dict) -> str:
+    """One line saying why the Jobs tab shows fewer than were pushed.
+
+    Pushed counts every job this PC holds above its threshold, including
+    ones already in Applications, which the Jobs tab leaves out by design."""
+    b = res.get("breakdown")
+    if not b:
+        return "  (the cloud did not say how many are listed -- deploy it to see)"
+    parts = [f"{b.get('listed', 0)} listed on the Jobs tab"]
+    if b.get("in_applications"):
+        parts.append(f"{b['in_applications']} already in Applications")
+    if b.get("below_threshold"):
+        parts.append(f"{b['below_threshold']} queued but below your "
+                     f"threshold of {b.get('threshold', 60):g}")
+    if res.get("removed_below_threshold"):
+        parts.append(f"{res['removed_below_threshold']} removed for scoring under "
+                     f"the cloud's threshold of {b.get('threshold', 60):g}")
+    return "  " + ", ".join(parts)
 
 
 def _salary_text(row: Any) -> str:
